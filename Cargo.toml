@@ -2,6 +2,12 @@
 name = "ramon"
 version = "0.0.0"
 edition = "2021"
+description = "A lightweight server monitoring framework. Send emails when custom conditions are met."
+documentation = "https://github.com/reujab/ramon/wiki"
+repository = "https://github.com/reujab/ramon"
+license = "MIT"
+keywords = ["monitor", "server", "ssh", "nginx", "fail2ban"]
+categories = ["command-line-utilities", "email", "parsing"]
 
 [dependencies]
 env_logger = "0.11"

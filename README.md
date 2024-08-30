@@ -43,7 +43,7 @@ ssh_ips = { length = 64, store = true }
 
 [monitor.ssh_login]
 service = "ssh"
-match_log = '^.*\]: Accepted \S+ for (?<user>\S+) from (?<ip>)''
+match_log = '^.*\]: Accepted \S+ for (?<user>\S+) from (?<ip>)'
 if = { "!ssh_ips" = "{{ip}}" }
 push = { ssh_ips = "{{ip}}" }
 notify = { type = "critical", title = "New SSH login from {{ip}} to {{user}}@{{host}}" }
