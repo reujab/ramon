@@ -1,7 +1,9 @@
 [package]
-name = "radon"
+name = "ramon"
 version = "0.0.0"
 edition = "2021"
 
 [dependencies]
+env_logger = "0.11"
+log = "0.4"
 toml = "0.8"
