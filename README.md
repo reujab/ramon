@@ -311,18 +311,18 @@ if = [{ a = 42 }, { b = "Hello world" }]
 notify = { title = "a = 42 OR b = 'Hello world'" }
 ```
 
-##### Example (or alternate)
+##### Example (xor)
 
 ```toml
-[function.if_or]
-notify = { title = "a = 42 OR b = 'Hello world'" }
+[function.if_xor]
+notify = { title = "a = 42 XOR b = 'Hello world'" }
 
-[monitor.if_or]
+[monitor.if_xor]
 # ...
-[[monitor.if_or.actions]]
+[[monitor.if_xor.actions]]
 if = { a = 42, "!b" = "Hello world" }
 call = "if_or"
-[[monitor.if_or.actions]]
+[[monitor.if_xor.actions]]
 if = { "!a" = 42, b = "Hello world" }
 call = "if_or"
 ```
