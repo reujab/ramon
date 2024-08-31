@@ -125,17 +125,14 @@ async fn run() -> Result<()> {
             } else if size == cursor {
                 continue;
             }
+            let chunk_size = size - cursor;
 
-            info!(
-                "[monitor.{monitor_name}] Log file grew by {} bytes",
-                size - cursor
-            );
-
-            // FIXME: Race condition: What if the file grew after we last checked?
-            // Instead of reading until EOF, we should only read `size - cursor` bytes.
+            info!("[monitor.{monitor_name}] Log file grew by {chunk_size} bytes",);
 
             // Ensure chunk ends with newline.
-            file.seek(SeekFrom::End(-1)).await?;
+            // SeekFrom::End is not used because it introduces a race condition if the
+            // file grew immediately after the size was checked.
+            file.seek(SeekFrom::Start(size - 1)).await?;
             let mut buffer = [0; 1];
             file.read(&mut buffer).await?;
             if buffer[0] != '\n' as u8 {
@@ -145,11 +142,18 @@ async fn run() -> Result<()> {
 
             // Match chunk against log_regex and execute on each match.
             file.seek(SeekFrom::Start(cursor)).await?;
-            let mut buffer = String::new();
-            // FIXME
-            file.read_to_string(&mut buffer).await?;
-            let trimmed_buffer = &buffer[0..buffer.len() - 1];
-            for captures in log_regex.captures_iter(trimmed_buffer) {
+            // Don't read the final newline.
+            let mut buffer = vec![0; chunk_size as usize - 1];
+            file.read_exact(&mut buffer).await?;
+            let buffer_str = match String::from_utf8(buffer) {
+                Ok(buffer_str) => buffer_str,
+                Err(err) => {
+                    error!("[monitor.{monitor_name}] Log chunk is not valid UTF-8: {err}");
+                    cursor = size;
+                    continue;
+                }
+            };
+            for captures in log_regex.captures_iter(&buffer_str) {
                 info!("Match found");
                 let mut command = Command::new("sh");
                 command.args(&["-c", monitor["exec"].as_str().unwrap()]);
