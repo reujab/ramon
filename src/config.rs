@@ -1,19 +1,20 @@
-use toml::{de::Error, Table, Value};
+use anyhow::{anyhow, bail, Error, Result};
+use toml::{Table, Value};
 
-pub fn parse(doc: &str) -> Result<Table, String> {
+pub fn parse(doc: &str) -> Result<Table> {
     let table = doc
         .parse::<Table>()
         .map_err(|err| map_readable_err(doc, err))?;
 
     // Validate root keys.
-    validate_keys(&table, &vec!["monitor", "notify", "var"])?;
+    validate_keys(&table, &["monitor", "notify", "var"])?;
 
     // Validate variables.
     if let Some(vars) = table.get("var").and_then(|vars| vars.as_table()) {
         for (var_name, var) in vars {
             match *var {
-                Value::Table(ref var) => validate_keys(var, &vec!["length", "store"])
-                    .map_err(|err| format!("Invalid variable `{var_name}`: {err}"))?,
+                Value::Table(ref var) => validate_keys(var, &["length", "store"])
+                    .map_err(|err| anyhow!("Invalid variable `{var_name}`: {err}"))?,
                 _ => {}
             }
         }
@@ -27,10 +28,19 @@ pub fn parse(doc: &str) -> Result<Table, String> {
     // Validate monitors.
     match table.get("monitor") {
         None => {
-            return Err(format!("No monitors found!"));
+            bail!("No monitors found!");
         }
-        Some(_monitors) => {
-            // TODO
+        Some(monitors) => {
+            let monitors = monitors
+                .as_table()
+                .ok_or(anyhow!("Key `monitor` must be a table."))?;
+            for (name, monitor) in monitors {
+                let monitor = monitor
+                    .as_table()
+                    .ok_or(anyhow!("Monitor `{name}` must be a table."))?;
+                validate_keys(monitor, &["log", "match_log", "exec"])
+                    .map_err(|err| anyhow!("Monitor `{name}`: {err}"))?;
+            }
         }
     }
 
@@ -38,7 +48,7 @@ pub fn parse(doc: &str) -> Result<Table, String> {
 }
 
 /// Turns a `toml::de::Error` into a human-readable error message.
-fn map_readable_err(doc: &str, err: Error) -> String {
+fn map_readable_err(doc: &str, err: toml::de::Error) -> Error {
     let mut message = err.message().to_owned();
     // Print lines where error occurred.
     if let Some(err_range) = err.span() {
@@ -63,13 +73,13 @@ fn map_readable_err(doc: &str, err: Error) -> String {
             }
         }
     }
-    message
+    anyhow!("{message}")
 }
 
-fn validate_keys(table: &Table, valid_keys: &Vec<&'static str>) -> Result<(), String> {
+fn validate_keys(table: &Table, valid_keys: &[&'static str]) -> Result<()> {
     for key in table.keys() {
         if !valid_keys.contains(&key.as_str()) {
-            return Err(format!("Invalid key: {key}"));
+            bail!("Invalid key `{key}`");
         }
     }
 
