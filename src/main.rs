@@ -1,14 +1,23 @@
-use std::{io::SeekFrom, path::Path, process::exit};
+use std::{
+    io::SeekFrom,
+    path::Path,
+    process::exit,
+    time::{Duration, Instant},
+};
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 use log::{debug, error, info, warn};
-use notify::{RecursiveMode, Watcher};
+use notify::{
+    event::{MetadataKind, ModifyKind, RenameMode},
+    EventKind, RecursiveMode, Watcher,
+};
 use regex::Regex;
 use tokio::{
     fs::OpenOptions,
     io::{AsyncReadExt, AsyncSeekExt},
     process::Command,
     sync::mpsc,
+    time::sleep,
 };
 
 mod config;
@@ -41,7 +50,7 @@ async fn run() -> Result<()> {
         .as_table()
         .expect("The `monitor` key must be a table.")
     {
-        info!("Setting up {monitor_name}");
+        info!("Setting up {monitor_name}.");
 
         // Use multi-line regex in case more than one line is read at a time.
         // FIXME: Multi-line mode does not handle carriage returns. Rewrite for Windows support.
@@ -58,24 +67,59 @@ async fn run() -> Result<()> {
         file.seek(SeekFrom::End(0)).await?;
         let mut cursor = file.stream_position().await?;
 
-        // FIXME: Handle log rotations.
         let (tx, mut rx) = mpsc::channel(1);
         let mut watcher = notify::recommended_watcher(move |res| {
             tx.blocking_send(res).unwrap();
         })?;
-        watcher.watch(Path::new(file_name), RecursiveMode::NonRecursive)?;
+        let file_path = Path::new(file_name);
+        watcher
+            .watch(file_path, RecursiveMode::NonRecursive)
+            .unwrap();
 
         while let Some(res) = rx.recv().await {
-            if let Err(err) = res {
-                error!("Failed monitoring {file_name}: {err}");
-                continue;
-            }
+            let event = match res {
+                Ok(event) => event,
+                Err(err) => {
+                    error!("Failed monitoring {file_name}: {err}");
+                    continue;
+                }
+            };
 
-            debug!("Event: {:?}", res.unwrap());
+            debug!("Event: {:?}", event);
+            match event.kind {
+                // Handle move from and deletion. Untested on kernels other than Linux.
+                // TODO: Test on other platforms.
+                EventKind::Modify(ModifyKind::Name(RenameMode::From))
+                | EventKind::Modify(ModifyKind::Metadata(MetadataKind::Any)) => {
+                    info!("File {file_name} was renamed. Reestablishing file descriptors.");
+
+                    // Handle log rotation.
+                    // FIXME: Are there any cases where new log files are not generated immediately
+                    // after rotation?
+                    watcher.unwatch(file_path).unwrap();
+                    let timeout = Instant::now().checked_add(Duration::from_secs(1)).unwrap();
+                    file = loop {
+                        match OpenOptions::new().read(true).open(file_name).await {
+                            Ok(file) => break file,
+                            Err(err) => {
+                                if Instant::now() > timeout {
+                                    bail!("File {file_name} was moved: {err}");
+                                } else {
+                                    sleep(Duration::from_millis(10)).await;
+                                }
+                            }
+                        }
+                    };
+                    cursor = 0;
+                    watcher.watch(file_path, RecursiveMode::NonRecursive)?;
+                    info!("File descriptors were reestablished.");
+                }
+                _ => {}
+            }
 
             let size = file.metadata().await?.len();
             if size < cursor {
-                info!("File {file_name} was truncated");
+                warn!("File {file_name} was truncated");
                 cursor = size;
                 continue;
             } else if size == cursor {
@@ -95,7 +139,7 @@ async fn run() -> Result<()> {
             let mut buffer = [0; 1];
             file.read(&mut buffer).await?;
             if buffer[0] != '\n' as u8 {
-                warn!("[monitor.{monitor_name}] Log chunk does not end in newline");
+                warn!("[monitor.{monitor_name}] Log chunk does not end in newline.");
                 continue;
             }
 
@@ -117,7 +161,7 @@ async fn run() -> Result<()> {
                     if let Some(capture) = captures.name(capture_name) {
                         command.env(capture_name, capture.as_str());
                     } else {
-                        warn!("[monitor.{monitor_name}] Capture group `{capture_name}` not found");
+                        warn!("[monitor.{monitor_name}] Capture group `{capture_name}` was not found.");
                     }
                 }
                 command.spawn()?.wait().await?;
