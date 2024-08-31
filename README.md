@@ -281,6 +281,43 @@ exec = "echo I will never run more than once per minute."
 cooldown = "1m"
 ```
 
+#### `monitor.<name>.if`\* (condition)
+
+This condition allows you to compare different values.
+
+- Comparing strings: `if = { str = "str" }`
+- Comparing string to var: `if = { str = "{{var}}" }`
+- Comparing numbers: `if = { num = 42 }` or `if = { num = "42" }`
+- Comparing number to var: `if = { num = "{{var}}" }`
+- Greater/less than: `if = { num = ">90" }` or `if = { num = "<{{var}}" }`
+- Array contains value: `if = { arr = "{{var}}" }`
+- Array does not contain value: `if = { "!arr" = "{{var}}" }`
+
+##### Example (and)
+
+```toml
+[monitor.if_and]
+# ...
+if = { a = 42, b = "Hello world" }
+notify = { title = "a = 42 AND b = 'Hello world'" }
+```
+
+##### Example (or)
+
+```toml
+[function.if_or]
+notify = { title = "a = 42 OR b = 'Hello world'" }
+
+[monitor.if_or]
+# ...
+[[monitor.if_or.actions]]
+if = { a = 42, "!b" = "Hello world" }
+call = "if_or"
+[[monitor.if_or.actions]]
+if = { "!a" = 42, b = "Hello world" }
+call = "if_or"
+```
+
 #### `monitor.<name>.cpu`\* (condition)
 
 #### `monitor.<name>.ram`\* (condition)
