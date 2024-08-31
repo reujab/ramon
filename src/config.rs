@@ -48,7 +48,7 @@ fn map_readable_err(doc: &str, err: Error) -> String {
         for (i, line) in doc.lines().enumerate() {
             line_start_byte = line_end_byte;
             // Account for new line.
-            line_end_byte += line.len() + 1;
+            line_end_byte = line_start_byte + line.len() + 1;
             if line_end_byte < err_range.start {
                 continue;
             }

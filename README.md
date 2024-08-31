@@ -141,3 +141,23 @@ notify = { type = "critical", title = "File changed: /etc/passwd" }
 on = [ "port_open" ]
 notify = { type = "critical", title = "New port opened: {{port}}" }
 ```
+
+### Custom actions
+
+```toml
+The following three monitors function identically.
+
+[monitor.1]
+# ...
+exec = 'echo "Cpu: $cpu%"'
+
+[monitor.2]
+# ...
+exec = ["echo", "Cpu:", "{{cpu}}%"]
+
+[action.named_action]
+exec = ["echo", "Cpu:", "{{cpu}}%"]
+[monitor.3]
+# ...
+action = "named_action"
+```

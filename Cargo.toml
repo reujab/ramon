@@ -10,6 +10,10 @@ keywords = ["monitor", "server", "ssh", "nginx", "fail2ban"]
 categories = ["command-line-utilities", "email", "parsing"]
 
 [dependencies]
+anyhow = "1"
 env_logger = "0.11"
 log = "0.4"
+notify = "6"
+regex = "1"
+tokio = { version = "1", features = ["full"] }
 toml = "0.8"
