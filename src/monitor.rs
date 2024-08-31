@@ -39,30 +39,30 @@ impl Monitor {
         let log_regex = Regex::new(&log_regex_str)
             .map_err(|err| anyhow!("Monitor {name}: Failed to parse match_log: {err}"))?;
 
-        let file_name = config["log"].as_str().unwrap();
-        let file_path = Path::new(file_name).to_owned();
-        let mut file = OpenOptions::new()
+        let log_file_name = config["log"].as_str().unwrap();
+        let log_file_path = Path::new(log_file_name).to_owned();
+        let mut log_file = OpenOptions::new()
             .read(true)
-            .open(&file_path)
+            .open(&log_file_path)
             .await
-            .map_err(|err| anyhow!("[{name}] Failed to open {file_path:?}: {err}"))?;
-        file.seek(SeekFrom::End(0)).await?;
-        let cursor = file.stream_position().await?;
+            .map_err(|err| anyhow!("[{name}] Failed to open {log_file_path:?}: {err}"))?;
+        log_file.seek(SeekFrom::End(0)).await?;
+        let cursor = log_file.stream_position().await?;
 
         let (tx, rx) = mpsc::channel(1);
         let mut watcher = notify::recommended_watcher(move |res| {
             tx.blocking_send(res).unwrap();
         })?;
         watcher
-            .watch(&file_path, RecursiveMode::NonRecursive)
+            .watch(&log_file_path, RecursiveMode::NonRecursive)
             .unwrap();
 
         Ok(Self {
             name,
             match_log: log_regex,
             exec: config["exec"].as_str().unwrap().to_owned(),
-            log_file_path: file_path,
-            log_file: file,
+            log_file_path,
+            log_file,
             cursor,
             watcher: Box::new(watcher),
             event_rx: rx,
