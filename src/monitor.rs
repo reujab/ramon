@@ -40,11 +40,12 @@ impl Monitor {
             .map_err(|err| anyhow!("Monitor {name}: Failed to parse match_log: {err}"))?;
 
         let file_name = config["log"].as_str().unwrap();
+        let file_path = Path::new(file_name).to_owned();
         let mut file = OpenOptions::new()
             .read(true)
-            .open(file_name)
+            .open(&file_path)
             .await
-            .map_err(|err| anyhow!("[{name}] Failed to open {file_name}: {err}"))?;
+            .map_err(|err| anyhow!("[{name}] Failed to open {file_path:?}: {err}"))?;
         file.seek(SeekFrom::End(0)).await?;
         let cursor = file.stream_position().await?;
 
@@ -52,7 +53,6 @@ impl Monitor {
         let mut watcher = notify::recommended_watcher(move |res| {
             tx.blocking_send(res).unwrap();
         })?;
-        let file_path = Path::new(file_name).to_owned();
         watcher
             .watch(&file_path, RecursiveMode::NonRecursive)
             .unwrap();
@@ -85,7 +85,6 @@ impl Monitor {
     }
 
     async fn process_event(&mut self, event: notify::Event) -> Result<()> {
-        let prefix = format!("[{}]", self.name);
         debug!("Event: {:?}", event);
 
         // Handle move from and deletion. Untested on kernels other than Linux.
@@ -98,62 +97,15 @@ impl Monitor {
             _ => {}
         }
 
-        let size = self.log_file.metadata().await?.len();
-        if size < self.cursor {
+        let new_size = self.log_file.metadata().await?.len();
+        if new_size < self.cursor {
             warn!("File {:?} was truncated", self.log_file_path);
-            self.cursor = size;
+            self.cursor = new_size;
             return Ok(());
-        } else if size == self.cursor {
-            return Ok(());
-        }
-        let chunk_size = size - self.cursor;
-
-        info!("{prefix} Log file grew by {chunk_size} bytes");
-
-        // Ensure chunk ends with newline.
-        // SeekFrom::End is not used because it introduces a race condition if the
-        // file grew immediately after the size was checked.
-        self.log_file.seek(SeekFrom::Start(size - 1)).await?;
-        let mut buffer = [0; 1];
-        self.log_file.read(&mut buffer).await?;
-        if buffer[0] != '\n' as u8 {
-            warn!("{prefix} Log chunk does not end in newline.");
+        } else if new_size == self.cursor {
             return Ok(());
         }
-
-        // Match chunk against log_regex and execute on each match.
-        self.log_file.seek(SeekFrom::Start(self.cursor)).await?;
-        // Don't read the final newline.
-        let mut buffer = vec![0; chunk_size as usize - 1];
-        self.log_file.read_exact(&mut buffer).await?;
-        let buffer_str = match String::from_utf8(buffer) {
-            Ok(buffer_str) => buffer_str,
-            Err(err) => {
-                error!("{prefix} Log chunk is not valid UTF-8: {err}",);
-                self.cursor = size;
-                return Ok(());
-            }
-        };
-        for captures in self.match_log.captures_iter(&buffer_str) {
-            info!("Match found");
-            let mut command = Command::new("sh");
-            command.args(&["-c", &self.exec]);
-            for capture_name in self
-                .match_log
-                .capture_names()
-                .filter(Option::is_some)
-                .map(|n| n.unwrap())
-            {
-                if let Some(capture) = captures.name(capture_name) {
-                    command.env(capture_name, capture.as_str());
-                } else {
-                    warn!("{prefix} Capture group `{capture_name}` was not found.");
-                }
-            }
-            command.spawn()?.wait().await?;
-        }
-
-        self.cursor = size;
+        self.process_chunk(new_size).await?;
 
         Ok(())
     }
@@ -189,6 +141,59 @@ impl Monitor {
         self.watcher
             .watch(&self.log_file_path, RecursiveMode::NonRecursive)?;
         info!("File descriptors were reestablished.");
+
+        Ok(())
+    }
+
+    async fn process_chunk(&mut self, new_size: u64) -> Result<()> {
+        let prefix = format!("[{}]", self.name);
+        let chunk_size = new_size - self.cursor;
+        info!("{prefix} Log file grew by {chunk_size} bytes");
+
+        // Ensure chunk ends with newline.
+        // SeekFrom::End is not used because it introduces a race condition if the
+        // file grew immediately after the size was checked.
+        self.log_file.seek(SeekFrom::Start(new_size - 1)).await?;
+        let mut buffer = [0; 1];
+        self.log_file.read(&mut buffer).await?;
+        if buffer[0] != '\n' as u8 {
+            warn!("{prefix} Log chunk does not end in newline.");
+            return Ok(());
+        }
+
+        // Match chunk against log_regex and execute on each match.
+        self.log_file.seek(SeekFrom::Start(self.cursor)).await?;
+        // Don't read the final newline.
+        let mut buffer = vec![0; chunk_size as usize - 1];
+        self.log_file.read_exact(&mut buffer).await?;
+        let buffer_str = match String::from_utf8(buffer) {
+            Ok(buffer_str) => buffer_str,
+            Err(err) => {
+                error!("{prefix} Log chunk is not valid UTF-8: {err}",);
+                self.cursor = new_size;
+                return Ok(());
+            }
+        };
+        for captures in self.match_log.captures_iter(&buffer_str) {
+            info!("Match found");
+            let mut command = Command::new("sh");
+            command.args(&["-c", &self.exec]);
+            for capture_name in self
+                .match_log
+                .capture_names()
+                .filter(Option::is_some)
+                .map(|n| n.unwrap())
+            {
+                if let Some(capture) = captures.name(capture_name) {
+                    command.env(capture_name, capture.as_str());
+                } else {
+                    warn!("{prefix} Capture group `{capture_name}` was not found.");
+                }
+            }
+            command.spawn()?.wait().await?;
+        }
+
+        self.cursor = new_size;
 
         Ok(())
     }
