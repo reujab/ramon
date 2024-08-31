@@ -145,7 +145,7 @@ notify = { type = "critical", title = "New port opened: {{port}}" }
 ### Custom actions
 
 ```toml
-The following three monitors function identically.
+# The following three monitors function identically.
 
 [monitor.1]
 # ...
