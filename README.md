@@ -305,6 +305,15 @@ notify = { title = "a = 42 AND b = 'Hello world'" }
 ##### Example (or)
 
 ```toml
+[monitor.if_or]
+# ...
+if = [{ a = 42 }, { b = "Hello world" }]
+notify = { title = "a = 42 OR b = 'Hello world'" }
+```
+
+##### Example (or alternate)
+
+```toml
 [function.if_or]
 notify = { title = "a = 42 OR b = 'Hello world'" }
 
