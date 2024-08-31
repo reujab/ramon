@@ -35,6 +35,7 @@ async fn run() -> Result<()> {
         .expect("The `monitor` key must be a table.")
     {
         Monitor::new(monitor_name.clone(), monitor.as_table().unwrap().clone())
+            .await?
             .start()
             .await?;
     }
