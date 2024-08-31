@@ -215,8 +215,6 @@ push = { arr = 42 }
 set = { a = 42, b = "Hello, world" }
 ```
 
-\* Not yet implemented
-
 ### `[monitor]`
 
 Each monitor has three different types of keys:
@@ -270,6 +268,19 @@ threshold = "3/1m"
 notify = { title = "Three server errors occured within one minute!" }
 ```
 
+#### `monitor.<name>.cooldown`\* (condition)
+
+This condition is false for `d` duration after an action is run and true afterward.
+
+##### Example
+
+```toml
+[monitor.1]
+every = "1s"
+exec = "echo I will never run more than once per minute."
+cooldown = "1m"
+```
+
 #### `monitor.<name>.cpu`\* (condition)
 
 #### `monitor.<name>.ram`\* (condition)
@@ -280,10 +291,12 @@ notify = { title = "Three server errors occured within one minute!" }
 
 The monitor can contain any action. See [[function.\<name\>]](#functionname) for a list of actions.
 
-### `[notify]`
+### `[notify]`\*
 
 Notification settings (TODO).
 
-### `[var]`
+### `[var]`\*
 
 Variable settings (TODO).
+
+\* Not yet implemented
