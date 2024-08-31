@@ -67,7 +67,7 @@ notify = { type = "critical", title = "New SSH login from {{ip}} to {{user}}@{{h
 ```toml
 [monitor.cpu]
 cpu = ">90"
-duration = "2m"
+threshold = "2m"
 notify = { type = "warn", title = "[{{host}}] CPU > 90% for 2m" }
 cooldown = "1h"
 
@@ -142,7 +142,7 @@ on = [ "port_open" ]
 notify = { type = "critical", title = "New port opened: {{port}}" }
 ```
 
-### Custom actions
+### Functions
 
 ```toml
 # The following three monitors function identically.
@@ -155,9 +155,135 @@ exec = 'echo "Cpu: $cpu%"'
 # ...
 exec = ["echo", "Cpu:", "{{cpu}}%"]
 
-[action.named_action]
+[function.print_cpu]
 exec = ["echo", "Cpu:", "{{cpu}}%"]
 [monitor.3]
 # ...
-action = "named_action"
+call = "print_cpu"
 ```
+
+## Specification (WIP)
+
+On startup, Ramon loads [an internal config file] with sane defaults, and then it loads /etc/ramon.d/\*.toml, and finally it loads /etc/ramon.toml. Each succeeding config file overwrites any properties loaded prior.
+
+### `[function]`\*
+
+This table defines various functions that can be referenced by monitors. See [Functions](#functions).
+
+### `[function.<name>]`\*
+
+This table defines a function that runs actions.
+
+#### `function.<name>.call`\*
+
+This key may be either a String or an Array. If this key is a String, the function with this name will be called. If this key is an Array, each function will be called synchronously.
+
+#### `function.<name>.exec`
+
+This key may be either a String or an Array. If this key is a String, it is called as a single argument to `sh -c` (\*nix) or `cmd /C` (Windows). If this key is an Array, the first element is the binary, and the remaining elements are passed as arguments.
+
+### `[function.<name>.notify]`\*
+
+This table defines a notification that will be dispatched when the function is called.
+
+#### `function.<name>.notify.type`\*
+
+This String defines the notification's type. Its default value is `info`.
+
+### `[function.<name>.push]`\*
+
+This table pushes values to each array.
+
+#### Example
+
+This table sets each key to its value.
+
+```toml
+[var]
+arr = { length = 8 }
+
+[function.foo]
+push = { arr = 42 }
+```
+
+### `[function.<name>.set]`\*
+
+#### Example
+
+```toml
+[function.foo]
+set = { a = 42, b = "Hello, world" }
+```
+
+\* Not yet implemented
+
+### `[monitor]`
+
+Each monitor has three different types of keys:
+
+- metadata
+- conditions
+- actions
+
+### `[monitor.<name>]`
+
+This table defines a monitor.
+
+#### `monitor.<name>.log` (metadata)
+
+This String specifies the log file for the monitor. Mutually exclusive with `service`.
+
+#### `monitor.<name>.service`\* (metadata)
+
+This String specifies the journal to use for the monitor. Mutually exclusive with `log`.
+
+#### `monitor.<name>.every` (condition)
+
+This condition is true each interval.
+
+##### Example
+
+```toml
+[monitor.1]
+every = "1m"
+notify = { title = 'The current time is {{ exec("date") }}.' }
+```
+
+#### `monitor.<name>.match_log` (condition)
+
+This condition requires each new line of the log file to match the specified regular expression to be true. This key can either be a regular expression or an array of regular expressions, where each regex must match.\*
+
+#### `monitor.<name>.ignore_log` (condition)
+
+This condition requires each new line of the log file to _not_ match the specified regular expression to be true. This key can either be a regular expression or an array of regular expressions, where each regex must not match.\*
+
+#### `monitor.<name>.threshold`\* (condition)
+
+This condition requires every other condition to be true `n` times within `d` duration before running the actions. The format of this key is either `"n/d"` or `"d"`. For the latter, the other conditions must be true for 100% of the duration before running the actions.
+
+##### Example
+
+```toml
+[monitor.server_errors]
+log = "/var/log/server/error.log"
+threshold = "3/1m"
+notify = { title = "Three server errors occured within one minute!" }
+```
+
+#### `monitor.<name>.cpu`\* (condition)
+
+#### `monitor.<name>.ram`\* (condition)
+
+#### `monitor.<name>.swap`\* (condition)
+
+#### `monitor.<name>.<action>` (action)
+
+The monitor can contain any action. See [[function.\<name\>]](#functionname) for a list of actions.
+
+### `[notify]`
+
+Notification settings (TODO).
+
+### `[var]`
+
+Variable settings (TODO).
