@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     io::SeekFrom,
     path::{Path, PathBuf},
     time::{Duration, Instant},
@@ -27,6 +28,7 @@ pub struct Monitor {
     log: Option<Log>,
     watcher: Box<dyn Watcher>,
     event_rx: Receiver<InternalEvent>,
+    local_variables: HashMap<String, String>,
 }
 
 pub struct Log {
@@ -105,6 +107,7 @@ impl Monitor {
             log: log_file,
             watcher: Box::new(watcher),
             event_rx,
+            local_variables: HashMap::new(),
         })
     }
 
@@ -116,7 +119,7 @@ impl Monitor {
                 InternalEvent::LogFileEvent(event) => match event {
                     Ok(event) => self.process_log_event(event).await?,
                     Err(err) => {
-                        error!("[{}] Event error: {err}", self.name);
+                        error!("[{}] Internal event error: {err}", self.name);
                     }
                 },
             };
@@ -147,9 +150,7 @@ impl Monitor {
         } else if new_size == log.cursor {
             return Ok(());
         }
-        self.process_chunk(new_size).await?;
-
-        Ok(())
+        self.process_chunk(new_size).await
     }
 
     async fn reinit_file_descriptors(&mut self) -> Result<()> {
@@ -195,8 +196,8 @@ impl Monitor {
         }
 
         // Ensure chunk ends with newline.
-        // SeekFrom::End is not used because it introduces a race condition if the
-        // file grew immediately after the size was checked.
+        // SeekFrom::End is not used here because it introduces a race condition
+        // if the file grew immediately after the size was checked.
         log.file.seek(SeekFrom::Start(new_size - 1)).await?;
         let mut buffer = [0; 1];
         log.file.read(&mut buffer).await?;
@@ -220,6 +221,7 @@ impl Monitor {
         log.cursor = new_size;
         for line in buffer_str.lines() {
             self.dispatch_event(ExternalEvent::LogLine(line)).await?;
+            self.local_variables.clear();
         }
 
         Ok(())
@@ -235,15 +237,14 @@ impl Monitor {
                     None => return Ok(()),
                 };
                 info!("[{}] Match found.", self.name);
-                let mut command = Command::new("sh");
-                command.args(&["-c", self.exec.as_ref().unwrap()]);
                 for capture_name in regex
                     .capture_names()
                     .filter(Option::is_some)
                     .map(|n| n.unwrap())
                 {
                     if let Some(capture) = captures.name(capture_name) {
-                        command.env(capture_name, capture.as_str());
+                        self.local_variables
+                            .insert(capture_name.to_owned(), capture.as_str().to_owned());
                     } else {
                         warn!(
                             "[{}] Capture group `{capture_name}` was not found.",
@@ -251,7 +252,6 @@ impl Monitor {
                         );
                     }
                 }
-                command.spawn()?.wait().await?;
             }
         }
 
@@ -263,6 +263,18 @@ impl Monitor {
 
         // TODO: threshold
 
+        self.run_actions().await
+    }
+
+    async fn run_actions(&self) -> Result<()> {
+        if let Some(exec) = &self.exec {
+            let mut command = Command::new("sh");
+            command.args(&["-c", exec]);
+            for (var, val) in &self.local_variables {
+                command.env(var, val);
+            }
+            command.spawn()?.wait().await?;
+        }
         Ok(())
     }
 }
