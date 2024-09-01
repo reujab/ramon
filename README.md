@@ -2,7 +2,7 @@
 
 > :warning: This project is a WIP and not yet functional. All configuration is subject to change.
 
-Ramon is a lightweight server monitoring framework. It runs actions (e.g. sending emails) when certain conditions are met. For example, you can configure Ramon to send an email every time an SSH connection from a new IP address is established. Or send an email when a service goes down. Perhaps you would like daily emails of any 5xx status codes that occurred. Ramon makes this easy.
+Ramon is a lightweight, versatile server monitoring framework. It runs actions (e.g. sending emails) when certain conditions are met. For example, you can configure Ramon to send an email every time an SSH connection from a new IP address is established. Or send an email when a service goes down. Perhaps you would like daily emails of any 5xx server errors that occurred. Ramon makes this easy.
 
 Ramon's design is heavily inspired by [fail2ban](https://github.com/fail2ban/fail2ban) and [Tasker](https://play.google.com/store/apps/details?id=net.dinglisch.android.taskerm).
 
@@ -17,9 +17,9 @@ from = "ramon@{{host}}"
 to = "you@{{host}}"
 limit = "10/m"
 # When a notification is dispatched, wait 10 seconds to see
-# if another action of the same type occurs, and aggregate
-# them into one notification. If this process repeats for
-# longer than 1 minute, send the notification immediately.
+# if another notification with the same id is dispatched,
+# and aggregate them into one notification. If this process
+# repeats for longer than 1 minute, send the notification immediately.
 aggregate = "10s"
 aggregate_timeout = "1m"
 notify = "default"
@@ -27,11 +27,11 @@ notify = "default"
 # Aggregate all info notifications, and send them all in
 # one email at 8:00AM daily.
 [notify.type.info]
-aggregate = "* * * 8:00AM"
+aggregate = "0 8 * * *"
 
 # Do not aggregate critical notifications.
 [notify.type.critical]
-aggregate = "0s"
+aggregate = 0
 ```
 
 ### SSH
@@ -54,7 +54,7 @@ service = "ssh"
 match_log = '^.*\]: Accepted \S+ for (?<user>\S+) from (?<ip>)'
 [[monitor.ssh_login.actions]]
 if = { ssh_ips = "{{ip}}" }
-# We only send these info emails once per day.
+# We only send these info emails once per day. (See Setup.)
 notify = { type = "info", title = "SSH login to {{user}}@{{host}}" }
 [[monitor.ssh_login.actions]]
 if = { "!ssh_ips" = "{{ip}}" }
@@ -66,16 +66,17 @@ notify = { type = "critical", title = "New SSH login from {{ip}} to {{user}}@{{h
 
 ```toml
 [monitor.cpu]
-cpu = ">90"
+every = "1s"
+if = { cpu = ">90" }
 threshold = "2m"
-notify = { type = "warn", title = "[{{host}}] CPU > 90% for 2m" }
 cooldown = "1h"
+notify = { type = "warn", title = "[{{host}}] CPU > 90% for 2m" }
 
 [monitor.ram]
 ram = ">90"
 swap = ">50"
-notify = { type = "warn", title = "[{{host}}] RAM: {{ram}}, swap: {{swap}}" }
 cooldown = "1h"
+notify = { type = "warn", title = "[{{host}}] RAM: {{ram}}%, swap: {{swap}}%" }
 ```
 
 ### Nginx
@@ -127,7 +128,7 @@ notify = { type = "error", title = "Service failed: {{service}}" }
 [monitor.critical_service]
 service = "criticald"
 on = [ "service_fail" ]
-notify = { type = "critical", title = "Critical service failed! Restarting..." }
+notify = { type = "critical", title = "Critical daemon failed! Restarting..." }
 ```
 
 ### System integrity
@@ -164,39 +165,160 @@ call = "print_cpu"
 
 ## Specification (WIP)
 
-On startup, Ramon loads [an internal config file] with sane defaults, and then it loads /etc/ramon.d/\*.toml, and finally it loads /etc/ramon.toml. Each succeeding config file overwrites any properties loaded prior.
+On startup, Ramon loads [an internal config file] with sane defaults, and then it loads /etc/ramon.d/\*.toml, and finally it loads /etc/ramon.toml. Each succeeding config file overwrites any properties loaded prior.\*
 
-### `[function]`\*
+### Monitors
 
-This table defines various functions that can be referenced by monitors. See [Functions](#functions).
+Monitors are configured by creating a table in the `[monitor]` table (e.g. `[monitor.example]`). Each key in a monitor is classified as an event, a condition, or an action. A monitor must have at least one event. When an event is fired, the monitor evaluates each condition, and if they are all true, then the actions are performed. Monitors can share data with each other through variables.
 
-### `[function.<name>]`\*
+### Events
 
-This table defines a function that runs actions.
+#### `service`\* string or array of strings
 
-#### `function.<name>.call`\*
+This event is fired every time the specified services output a line to the systemd journal.
 
-This key may be either a String or an Array. If this key is a String, the function with this name will be called. If this key is an Array, each function will be called synchronously.
+##### Local variables
 
-#### `function.<name>.exec`
+- `service` name of the service
 
-This key may be either a String or an Array. If this key is a String, it is called as a single argument to `sh -c` (\*nix) or `cmd /C` (Windows). If this key is an Array, the first element is the binary, and the remaining elements are passed as arguments.
+#### `log` glob\* (string), or array\* of globs
 
-### `[function.<name>.notify]`\*
+This event is fired for every line that is appended to the specified files.
 
-This table defines a notification that will be dispatched when the function is called.
+#### `watch`\* glob (string), or array of globs
 
-#### `function.<name>.notify.type`\*
+This event is fired each time the contents of a file change.
 
-This String defines the notification's type. Its default value is `info`.
+##### Local variables
 
-### `[function.<name>.push]`\*
+- `file` the path to the file that changed
 
-This table pushes values to each array.
+#### `every`\* duration (string)
 
-#### Example
+This event is fired immediately, and then at the specified interval. A value of `"1ms"` fires every millisecond, `"1s"` every second, `"1m"` minute, `"1h"` hour, `"1d"` day, `"1w"` week, and `"1mo"` fires every month.
 
-This table sets each key to its value.
+```toml
+[monitor.timestamp]
+every = "1m"
+notify = { title = 'The current timestamp is {{ exec("date", "+%s") }}.' }
+```
+
+#### `at`\* cron (string)
+
+This event is fired at the specified date and time. Refer to <https://crontab.guru> for help.
+
+#### `on`\* string or array of strings
+
+This key allows the monitor to listen to one or more of the following events:
+
+- `service_fail` is fired when a systemd service fails. Sets `service` to the failing service's name.
+- `port_forwarded` is fired when a new port is open on your public IP address. Sets `port` (number) to the opened port.
+- `port_closed` is fired when a public port is closed. Sets `port` (number) to the closed port.
+
+### Conditions
+
+Conditions are performed sequentially in order of priority. Higher priority (least negative) conditions are evaluated before lower priority conditions. The priority is listed in brackets after the key.
+
+#### `cooldown`\* [-10] duration (string)
+
+This condition is true if actions have not been run within the specified duration.
+
+```toml
+[monitor.1]
+every = "1s"
+cooldown = "1m"
+exec = "echo I will never run more than once per minute."
+```
+
+#### `match_log` [-20] regex (string) or array of regexes
+
+This condition is true if the line matches the specified regular expressions. This key depends on either `log` or `service`. If this key is an array, all regular expressions must match.
+
+Named capture groups defined in the regular expression will become available as local variables to the following conditions and actions.
+
+#### `ignore_log`\* [-21] regex (string)
+
+This condition is true if the line does not match the specified regular expression. This key depends on either `log` or `service`.
+
+#### `get`\* [-45] string or array of strings
+
+This "condition" is always true and acts more like an action. It makes an HTTP GET request to the specified URLs. If the URL begins with `/`, then `https://{{host}}` is prepended to the URL, allowing you to omit the scheme and hostname.
+
+##### Local variables
+
+- `err` description of first error
+- `status` number or array of numbers that correspond with the URLs
+
+#### `if`\* [-50] table or array of tables
+
+This condition allows you to compare different values.
+
+- Compare variable to string: `if = { service = "ssh" }`
+- Compare string variables: `if = { service = "{{my_service}}" }`
+- Compare variable to number: `if = { num = 42 }` or `if = { num = "42" }`
+- Compare number variables: `if = { num = "{{var}}" }`
+- Greater/less than: `if = { num = ">90" }` or `if = { num = "<={{var}}" }`
+- Array contains value: `if = { arr = "{{var}}" }`
+- Array does not contain value: `if = { "!arr" = "{{var}}" }`
+- Index array: `if = { "arr_0" = "{{var}}" }`
+- Length of array: `if = { "#arr" = 0 }`
+- Variable is any: `if = { port = [ 80, 443 ] }`
+
+```toml
+[monitor.if_and]
+# ...
+if = { a = 42, b = "Hello world" }
+notify = { title = "a = 42 AND b = 'Hello world'" }
+
+[monitor.if_or]
+# ...
+if = [{ a = 42 }, { b = "Hello world" }]
+notify = { title = "a = 42 OR b = 'Hello world'" }
+
+[function.if_xor]
+notify = { title = "a = 42 XOR b = 'Hello world'" }
+[monitor.if_xor]
+# ...
+[[monitor.if_xor.actions]]
+if = { a = 42, "!b" = "Hello world" }
+call = "if_xor"
+[[monitor.if_xor.actions]]
+if = { "!a" = 42, b = "Hello world" }
+call = "if_xor"
+```
+
+#### `threshold`\* [-90] string
+
+This condition is true if every preceding condition has been true at least `n` times within `d` duration. The format of this key is `"n/d"`.
+
+```toml
+[monitor.server_errors]
+log = "/var/log/server/error.log"
+threshold = "3/1m"
+notify = { title = "Three server errors occured within one minute!" }
+```
+
+### Actions
+
+Actions are run when an event fires and all conditions are true.
+
+#### `call`\* string or array of strings
+
+This action calls the specified functions.
+
+#### `exec` string or array\* of strings
+
+This action spawns a child process. If this key is a string, it's passed as an argument to `sh -c` (\*nix) or `cmd /C` (Windows)\*, and variables are passed to the child through the environment. If this key is an array, the first item is the binary, and the remaining items are passed as arguments; variables can be passed to the child as arguments via templates.
+
+> :information_source: Note: Processes are assumed to be short-lived; they will not be killed when Ramon exits.
+
+#### `notify`\* table or string
+
+This action notifies the user. TODO
+
+#### `push`\* table
+
+This action pushes values to arrays.
 
 ```toml
 [var]
@@ -206,143 +328,29 @@ arr = { length = 8 }
 push = { arr = 42 }
 ```
 
-### `[function.<name>.set]`\*
+#### `add`\* table
 
-#### Example
+This action adds the specified value to each variable.
 
-```toml
-[function.foo]
-set = { a = 42, b = "Hello, world" }
-```
+#### `set`\* table
 
-### `[monitor]`
-
-Each monitor has three different types of keys:
-
-- metadata
-- conditions
-- actions
-
-### `[monitor.<name>]`
-
-This table defines a monitor.
-
-#### `monitor.<name>.log` (metadata)
-
-This String specifies the log file for the monitor. Mutually exclusive with `service`.
-
-#### `monitor.<name>.service`\* (metadata)
-
-This String specifies the journal to use for the monitor. Mutually exclusive with `log`.
-
-#### `monitor.<name>.every` (condition)
-
-This condition is true each interval.
-
-##### Example
+This action sets variables.
 
 ```toml
-[monitor.1]
-every = "1m"
-notify = { title = 'The current time is {{ exec("date") }}.' }
+[monitor.abc]
+every = "2d"
+set = { a = 42 }
+[[monitor.abc.actions]]
+set = { a = "{{ a * 2 }}", b = "Hello, world" }
+[[monitor.abc.actions]]
+if = { a = 84 }
+set = { c = "b equals {{b}}" }
 ```
 
-#### `monitor.<name>.match_log` (condition)
+## Notifications\*
 
-This condition requires each new line of the log file to match the specified regular expression to be true. This key can either be a regular expression or an array of regular expressions, where each regex must match.\*
+## Variables\*
 
-#### `monitor.<name>.ignore_log` (condition)
-
-This condition requires each new line of the log file to _not_ match the specified regular expression to be true. This key can either be a regular expression or an array of regular expressions, where each regex must not match.\*
-
-#### `monitor.<name>.threshold`\* (condition)
-
-This condition requires every other condition to be true `n` times within `d` duration before running the actions. The format of this key is either `"n/d"` or `"d"`. For the latter, the other conditions must be true for 100% of the duration before running the actions.
-
-##### Example
-
-```toml
-[monitor.server_errors]
-log = "/var/log/server/error.log"
-threshold = "3/1m"
-notify = { title = "Three server errors occured within one minute!" }
-```
-
-#### `monitor.<name>.cooldown`\* (condition)
-
-This condition is false for `d` duration after an action is run and true afterward.
-
-##### Example
-
-```toml
-[monitor.1]
-every = "1s"
-exec = "echo I will never run more than once per minute."
-cooldown = "1m"
-```
-
-#### `monitor.<name>.if`\* (condition)
-
-This condition allows you to compare different values.
-
-- Comparing strings: `if = { str = "str" }`
-- Comparing string to var: `if = { str = "{{var}}" }`
-- Comparing numbers: `if = { num = 42 }` or `if = { num = "42" }`
-- Comparing number to var: `if = { num = "{{var}}" }`
-- Greater/less than: `if = { num = ">90" }` or `if = { num = "<{{var}}" }`
-- Array contains value: `if = { arr = "{{var}}" }`
-- Array does not contain value: `if = { "!arr" = "{{var}}" }`
-
-##### Example (and)
-
-```toml
-[monitor.if_and]
-# ...
-if = { a = 42, b = "Hello world" }
-notify = { title = "a = 42 AND b = 'Hello world'" }
-```
-
-##### Example (or)
-
-```toml
-[monitor.if_or]
-# ...
-if = [{ a = 42 }, { b = "Hello world" }]
-notify = { title = "a = 42 OR b = 'Hello world'" }
-```
-
-##### Example (xor)
-
-```toml
-[function.if_xor]
-notify = { title = "a = 42 XOR b = 'Hello world'" }
-
-[monitor.if_xor]
-# ...
-[[monitor.if_xor.actions]]
-if = { a = 42, "!b" = "Hello world" }
-call = "if_or"
-[[monitor.if_xor.actions]]
-if = { "!a" = 42, b = "Hello world" }
-call = "if_or"
-```
-
-#### `monitor.<name>.cpu`\* (condition)
-
-#### `monitor.<name>.ram`\* (condition)
-
-#### `monitor.<name>.swap`\* (condition)
-
-#### `monitor.<name>.<action>` (action)
-
-The monitor can contain any action. See [[function.\<name\>]](#functionname) for a list of actions.
-
-### `[notify]`\*
-
-Notification settings (TODO).
-
-### `[var]`\*
-
-Variable settings (TODO).
+## Functions\*
 
 \* Not yet implemented
