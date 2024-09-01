@@ -216,7 +216,7 @@ This key allows the monitor to listen to one or more of the following events:
 
 ### Conditions
 
-Conditions are performed sequentially in order of priority. Higher priority (least negative) conditions are evaluated before lower priority conditions. The priority is listed in brackets after the key.
+Conditions are evaluated sequentially in order of priority. Higher priority (least negative) conditions are evaluated before lower priority conditions. The priority is listed in brackets after the key.
 
 #### `cooldown`\* [-10] duration (string)
 

@@ -5,6 +5,7 @@ use std::process::exit;
 
 use anyhow::{anyhow, Result};
 use monitor::Monitor;
+use sqlx::SqlitePool;
 
 #[tokio::main]
 async fn main() {
@@ -25,16 +26,16 @@ async fn run() -> Result<()> {
         )
     })?;
 
+    let pool = SqlitePool::connect(":memory:").await?;
+    sqlx::migrate!("./migrations").run(&pool).await?;
+
     // TODO: process vars
     // TODO: process notification config
     // TODO: process actions
 
     // Process monitors.
-    for (monitor_name, monitor) in config["monitor"]
-        .as_table()
-        .expect("The `monitor` key must be a table.")
-    {
-        Monitor::new(monitor_name.clone(), monitor.as_table().unwrap().clone())
+    for monitor_config in config.monitors {
+        Monitor::new(monitor_config, pool.clone())
             .await?
             .start()
             .await?;

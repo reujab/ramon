@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     io::SeekFrom,
-    path::{Path, PathBuf},
+    path::PathBuf,
     time::{Duration, Instant},
 };
 
@@ -12,6 +12,7 @@ use notify::{
     EventKind, RecursiveMode, Watcher,
 };
 use regex::Regex;
+use sqlx::{pool::PoolConnection, Sqlite, SqlitePool};
 use tokio::{
     fs::{File, OpenOptions},
     io::{AsyncReadExt, AsyncSeekExt},
@@ -19,7 +20,8 @@ use tokio::{
     sync::{mpsc, mpsc::Receiver},
     time::sleep,
 };
-use toml::Table;
+
+use crate::config::MonitorConfig;
 
 pub struct Monitor {
     name: String,
@@ -29,6 +31,7 @@ pub struct Monitor {
     watcher: Box<dyn Watcher>,
     event_rx: Receiver<InternalEvent>,
     local_variables: HashMap<String, String>,
+    sqlite: PoolConnection<Sqlite>,
 }
 
 pub struct Log {
@@ -42,31 +45,15 @@ pub enum InternalEvent {
 }
 
 pub enum ExternalEvent<'a> {
-    LogLine(&'a str),
+    _Every,
+    NewLogLine(&'a str),
 }
 
 impl Monitor {
-    pub async fn new(name: String, config: Table) -> Result<Self> {
-        let log_regex = match config.get("match_log") {
-            Some(match_log) => {
-                let log_regex_str = match_log
-                    .as_str()
-                    .ok_or(anyhow!("[{name}] Key `match_log` must be a string."))?;
-                // Use multi-line regex in case more than one line is read at a time.
-                // FIXME: Multi-line mode does not handle carriage returns. Rewrite for Windows support.
-                let log_regex = Regex::new(log_regex_str)
-                    .map_err(|err| anyhow!("[{name}] Failed to parse match_log: {err}"))?;
-                Some(log_regex)
-            }
-            None => None,
-        };
-
-        let log_file = match config.get("log") {
-            Some(log) => {
-                let file_name = log
-                    .as_str()
-                    .ok_or(anyhow!("[{name}] Key `log` must be a string."))?;
-                let path = Path::new(file_name).to_owned();
+    pub async fn new(config: MonitorConfig, pool: SqlitePool) -> Result<Self> {
+        let name = config.name;
+        let log_file = match config.log {
+            Some(path) => {
                 let mut file = OpenOptions::new()
                     .read(true)
                     .open(&path)
@@ -89,25 +76,17 @@ impl Monitor {
             watcher.watch(&log_file.path, RecursiveMode::NonRecursive)?;
         }
 
-        let exec = match config.get("exec") {
-            Some(exec) => {
-                // FIXME
-                let exec_str = exec
-                    .as_str()
-                    .ok_or(anyhow!("[{name}] Key `exec` must be a string."))?;
-                Some(exec_str.to_owned())
-            }
-            None => None,
-        };
+        let sqlite = pool.acquire().await?;
 
         Ok(Self {
             name,
-            log_regex,
-            exec,
+            log_regex: config.match_log,
+            exec: config.exec,
             log: log_file,
             watcher: Box::new(watcher),
             event_rx,
             local_variables: HashMap::new(),
+            sqlite,
         })
     }
 
@@ -220,7 +199,7 @@ impl Monitor {
         };
         log.cursor = new_size;
         for line in buffer_str.lines() {
-            self.dispatch_event(ExternalEvent::LogLine(line)).await?;
+            self.dispatch_event(ExternalEvent::NewLogLine(line)).await?;
             self.local_variables.clear();
         }
 
@@ -230,7 +209,7 @@ impl Monitor {
     async fn dispatch_event<'a>(&mut self, event: ExternalEvent<'a>) -> Result<()> {
         // TODO: cooldown
 
-        if let ExternalEvent::LogLine(line) = event {
+        if let ExternalEvent::NewLogLine(line) = event {
             if let Some(regex) = &self.log_regex {
                 let captures = match regex.captures(line) {
                     Some(captures) => captures,
