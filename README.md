@@ -65,18 +65,18 @@ notify = { type = "critical", title = "New SSH login from {{ip}} to {{user}}@{{h
 ### System resources
 
 ```toml
-[monitor.cpu]
-every = "1s"
-if = { cpu = ">90" }
-threshold = "2m"
-cooldown = "1h"
-notify = { type = "warn", title = "[{{host}}] CPU > 90% for 2m" }
+[monitor.cpu] # Monitor
+every = "1s" # Event
+if = { cpu = ">90" } # Condition
+threshold = "2m" # Condition
+notify = { type = "warn", title = "[{{host}}] CPU > 90% for 2m" } # Action
+cooldown = "1h" # Condition
 
 [monitor.ram]
-ram = ">90"
-swap = ">50"
-cooldown = "1h"
+every = "1s"
+if = { ram = ">90", swap = ">50" }
 notify = { type = "warn", title = "[{{host}}] RAM: {{ram}}%, swap: {{swap}}%" }
+cooldown = "1h"
 ```
 
 ### Nginx
@@ -113,8 +113,7 @@ notify = { type = "info", title = "404 at {{path}}" }
 ```toml
 [monitor.example_endpoint]
 every = "5m"
-get = "https://example.com/endpoint"
-if = { "!err" = "" }
+get_fail = "https://example.com/endpoint"
 notify = { type = "error", title = "{{url}}: {{err}}" }
 ```
 
@@ -143,7 +142,7 @@ on = [ "port_open" ]
 notify = { type = "critical", title = "New port opened: {{port}}" }
 ```
 
-### Functions
+### Tasks
 
 ```toml
 # The following three monitors function identically.
@@ -156,7 +155,7 @@ exec = 'echo "Cpu: $cpu%"'
 # ...
 exec = ["echo", "Cpu:", "{{cpu}}%"]
 
-[function.print_cpu]
+[task.print_cpu]
 exec = ["echo", "Cpu:", "{{cpu}}%"]
 [monitor.3]
 # ...
@@ -232,17 +231,17 @@ exec = "echo I will never run more than once per minute."
 
 #### `match_log` [-20] regex (string) or array of regexes
 
-This condition is true if the line matches the specified regular expressions. This key depends on either `log` or `service`. If this key is an array, all regular expressions must match.
+This condition is true if the line matches the specified regular expressions. This condition only applies to events from `log` or `service`. If this key is an array, all regular expressions must match.
 
 Named capture groups defined in the regular expression will become available as local variables to the following conditions and actions.
 
 #### `ignore_log`\* [-21] regex (string)
 
-This condition is true if the line does not match the specified regular expression. This key depends on either `log` or `service`.
+This condition is true if the line does not match the specified regular expression. This condition only applies to events from `log` or `service`.
 
-#### `get`\* [-45] string or array of strings
+#### `get_fail`\* [-45] string or array of strings
 
-This "condition" is always true and acts more like an action. It makes an HTTP GET request to the specified URLs. If the URL begins with `/`, then `https://{{host}}` is prepended to the URL, allowing you to omit the scheme and hostname.
+This condition makes an HTTP GET request to the specified URLs and evaluates to true if any status code is not 200. If the URL begins with `/`, then `https://{{host}}` is prepended to the URL, allowing you to omit the scheme and hostname.
 
 ##### Local variables
 
@@ -275,7 +274,7 @@ notify = { title = "a = 42 AND b = 'Hello world'" }
 if = [{ a = 42 }, { b = "Hello world" }]
 notify = { title = "a = 42 OR b = 'Hello world'" }
 
-[function.if_xor]
+[task.if_xor]
 notify = { title = "a = 42 XOR b = 'Hello world'" }
 [monitor.if_xor]
 # ...
@@ -302,10 +301,6 @@ notify = { title = "Three server errors occured within one minute!" }
 
 Actions are run when an event fires and all conditions are true.
 
-#### `call`\* string or array of strings
-
-This action calls the specified functions.
-
 #### `exec` string or array\* of strings
 
 This action spawns a child process. If this key is a string, it's passed as an argument to `sh -c` (\*nix) or `cmd /C` (Windows)\*, and variables are passed to the child through the environment. If this key is an array, the first item is the binary, and the remaining items are passed as arguments; variables can be passed to the child as arguments via templates.
@@ -314,7 +309,7 @@ This action spawns a child process. If this key is a string, it's passed as an a
 
 #### `notify`\* table or string
 
-This action notifies the user. TODO
+This action sends a notification via email, PushBullet, ... TODO
 
 #### `push`\* table
 
@@ -324,7 +319,7 @@ This action pushes values to arrays.
 [var]
 arr = { length = 8 }
 
-[function.foo]
+[task.foo]
 push = { arr = 42 }
 ```
 
@@ -347,10 +342,14 @@ if = { a = 84 }
 set = { c = "b equals {{b}}" }
 ```
 
+#### `call`\* string or array of strings
+
+This action calls the specified tasks.
+
 ## Notifications\*
 
 ## Variables\*
 
-## Functions\*
+## Tasks\*
 
 \* Not yet implemented
