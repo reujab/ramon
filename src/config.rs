@@ -7,7 +7,7 @@ pub fn parse(doc: &str) -> Result<Table> {
         .map_err(|err| map_readable_err(doc, err))?;
 
     // Validate root keys.
-    validate_keys(&table, &["monitor", "notify", "var"])?;
+    validate_keys(&table, &["function", "monitor", "notify", "var"])?;
 
     // Validate variables.
     if let Some(vars) = table.get("var").and_then(|vars| vars.as_table()) {

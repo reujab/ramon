@@ -22,7 +22,7 @@ use toml::Table;
 
 pub struct Monitor {
     name: String,
-    match_log: Regex,
+    log_regex: Regex,
     exec: String,
     log_file_path: PathBuf,
     log_file: File,
@@ -49,23 +49,21 @@ impl Monitor {
         log_file.seek(SeekFrom::End(0)).await?;
         let cursor = log_file.stream_position().await?;
 
-        let (tx, rx) = mpsc::channel(1);
+        let (event_tx, event_rx) = mpsc::channel(1);
         let mut watcher = notify::recommended_watcher(move |res| {
-            tx.blocking_send(res).unwrap();
+            event_tx.blocking_send(res).unwrap();
         })?;
-        watcher
-            .watch(&log_file_path, RecursiveMode::NonRecursive)
-            .unwrap();
+        watcher.watch(&log_file_path, RecursiveMode::NonRecursive)?;
 
         Ok(Self {
             name,
-            match_log: log_regex,
+            log_regex,
             exec: config["exec"].as_str().unwrap().to_owned(),
             log_file_path,
             log_file,
             cursor,
             watcher: Box::new(watcher),
-            event_rx: rx,
+            event_rx,
         })
     }
 
@@ -169,17 +167,17 @@ impl Monitor {
         let buffer_str = match String::from_utf8(buffer) {
             Ok(buffer_str) => buffer_str,
             Err(err) => {
-                error!("{prefix} Log chunk is not valid UTF-8: {err}",);
+                error!("{prefix} Log chunk is not valid UTF-8: {err}");
                 self.cursor = new_size;
                 return Ok(());
             }
         };
-        for captures in self.match_log.captures_iter(&buffer_str) {
+        for captures in self.log_regex.captures_iter(&buffer_str) {
             info!("Match found");
             let mut command = Command::new("sh");
             command.args(&["-c", &self.exec]);
             for capture_name in self
-                .match_log
+                .log_regex
                 .capture_names()
                 .filter(Option::is_some)
                 .map(|n| n.unwrap())
