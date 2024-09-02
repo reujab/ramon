@@ -36,7 +36,7 @@ pub struct Monitor {
 }
 
 pub enum Event {
-    _Every,
+    Tick,
     NewLogLine(String),
 }
 
@@ -48,6 +48,16 @@ impl Monitor {
         let name = config.name;
 
         let (event_tx, event_rx) = mpsc::channel(1);
+
+        if let Some(mut interval) = config.every {
+            let tx = event_tx.clone();
+            tokio::spawn(async move {
+                loop {
+                    interval.tick().await;
+                    tx.send(Event::Tick).await.unwrap();
+                }
+            });
+        }
 
         if let Some(log) = config.log {
             let log_watcher = LogWatcher::new(name.clone(), log, event_tx.clone()).await?;

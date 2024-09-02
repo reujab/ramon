@@ -2,6 +2,7 @@ use std::{path::PathBuf, time::Duration};
 
 use anyhow::{anyhow, bail, Error, Result};
 use regex::Regex;
+use tokio::time::{interval, Interval};
 use toml::{Table, Value};
 
 pub struct Config {
@@ -12,6 +13,7 @@ pub struct Config {
 pub struct MonitorConfig {
     pub name: String,
 
+    pub every: Option<Interval>,
     pub log: Option<PathBuf>,
 
     pub cooldown: Option<Duration>,
@@ -114,16 +116,23 @@ fn validate_keys(table: &Table, valid_keys: &[&'static str]) -> Result<()> {
 fn parse_monitor_config(name: String, mut monitor_table: Table) -> Result<MonitorConfig> {
     validate_keys(
         &monitor_table,
-        &["cooldown", "log", "match_log", "set", "push", "exec"],
+        &[
+            "every",
+            "log",
+            "cooldown",
+            "match_log",
+            "set",
+            "push",
+            "exec",
+        ],
     )?;
 
-    let cooldown = match monitor_table.remove("cooldown") {
-        Some(cooldown) => match cooldown {
-            Value::String(cooldown_str) => Some(
-                duration_str::parse(cooldown_str)
-                    .map_err(|err| anyhow!("Invalid cooldown:\n{err}"))?,
-            ),
-            _ => bail!("Key `cooldown` must be a string."),
+    let every = match monitor_table.remove("every") {
+        Some(every) => match every {
+            Value::String(every_str) => Some(interval(
+                duration_str::parse(every_str).map_err(|err| anyhow!("Key `every`:\n{err}"))?,
+            )),
+            _ => bail!("Key `every` must be a string."),
         },
         None => None,
     };
@@ -132,6 +141,17 @@ fn parse_monitor_config(name: String, mut monitor_table: Table) -> Result<Monito
         Some(log) => match log {
             Value::String(log_str) => Some(log_str.into()),
             _ => bail!("Key `log` must be a string."),
+        },
+        None => None,
+    };
+
+    let cooldown = match monitor_table.remove("cooldown") {
+        Some(cooldown) => match cooldown {
+            Value::String(cooldown_str) => Some(
+                duration_str::parse(cooldown_str)
+                    .map_err(|err| anyhow!("Invalid cooldown:\n{err}"))?,
+            ),
+            _ => bail!("Key `cooldown` must be a string."),
         },
         None => None,
     };
@@ -182,6 +202,7 @@ fn parse_monitor_config(name: String, mut monitor_table: Table) -> Result<Monito
         cooldown,
         log,
 
+        every,
         match_log,
 
         exec,

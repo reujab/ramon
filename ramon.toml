@@ -1,11 +1,6 @@
-[var]
-str = "Hello, world"
-num = 42
-
 [monitor.1]
-cooldown = "3s"
+every = "1s"
+cooldown = "2s"
 log = "test.log"
 match_log = '(?<line>.*)'
-push = { test = "{{line}}" }
-set = { a = 14 }
-exec = 'echo str = "$str", num = "$num", arr = "$arr"'
+exec = 'echo Hello, world'
