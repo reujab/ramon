@@ -194,7 +194,7 @@ This event is fired each time the contents of a file change.
 
 #### `every`\* duration (string)
 
-This event is fired immediately, and then at the specified interval. A value of `"1ms"` fires every millisecond, `"1s"` every second, `"1m"` minute, `"1h"` hour, `"1d"` day, `"1w"` week, and `"1mo"` fires every month.
+This event is fired immediately, and then at the specified interval. A value of `"1ms"` fires every millisecond, `"1s"` every second, `"1m"` minute, `"1h"` hour, `"1d"` day, `"1w"` week, and `"1mon"` fires every month.
 
 ```toml
 [monitor.timestamp]
@@ -218,7 +218,7 @@ This key allows the monitor to listen to one or more of the following events:
 
 Conditions are evaluated sequentially in order of priority. Higher priority (least negative) conditions are evaluated before lower priority conditions. The priority is listed in brackets after the key.
 
-#### `cooldown`\* [-10] duration (string)
+#### `cooldown` [-10] duration (string)
 
 This condition is true if actions have not been run within the specified duration.
 
