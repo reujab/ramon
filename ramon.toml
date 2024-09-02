@@ -1,10 +1,10 @@
-[monitor.1]
-log = "ramon.log"
-match_log = '^(?<line>.+)$'
-set = { test = "var" }
-exec = 'echo Line: $line, Test: $test'
+[var]
+test = []
+test_cap = 4
 
-[monitor.2]
-log = "ramon2.log"
-match_log = '^hello$'
-exec = 'echo Test: $test'
+[monitor.1]
+log = "test.log"
+match_log = '(?<line>.*)'
+push = { test = "{{line}}" }
+set = { a = 14 }
+exec = 'echo "$line" $a'

@@ -1,11 +1,11 @@
 mod config;
+mod log_watcher;
 mod monitor;
-
-use std::{collections::HashMap, process::exit, sync::Arc};
 
 use anyhow::{anyhow, Result};
 use log::error;
 use monitor::Monitor;
+use std::{collections::HashMap, process::exit, sync::Arc};
 use tokio::sync::Mutex;
 
 #[tokio::main]
@@ -23,15 +23,16 @@ async fn run() -> Result<()> {
     let doc = include_str!("../ramon.toml");
     let config = config::parse(doc).map_err(|err| {
         anyhow!(
-            "Failed to parse ramon.toml: {err}\n\nRefer to https://github.com/reujab/ramon/wiki"
+            "Failed to parse ramon.toml: {err}\n\nRefer to https://github.com/reujab/ramon#specification-wip"
         )
     })?;
 
-    // TODO: process vars
     // TODO: process notification config
     // TODO: process actions
 
-    let global_variables = Arc::new(Mutex::new(HashMap::new()));
+    let mut global_variables = HashMap::new();
+    global_variables.extend(config.variables);
+    let global_variables = Arc::new(Mutex::new(global_variables));
 
     // Process monitors.
     let mut monitors = Vec::with_capacity(config.monitors.len());

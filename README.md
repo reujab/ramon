@@ -38,8 +38,8 @@ aggregate = 0
 
 ```toml
 # Log each login from a new IP
-[var]
-ssh_ips = { length = 64, store = true }
+[store]
+ssh_ips = []
 
 [monitor.ssh_login]
 service = "ssh"
@@ -94,7 +94,7 @@ notify = { type = "error", title = "Server error: {{code}} at {{path}}" }
 # We can determine browsers by seeing if
 # they successfully GET a .css file.
 [var]
-humans = { length = 64 }
+human_ips = []
 
 [monitor.mark_human]
 log = "{{nginx_log}}"
@@ -311,18 +311,6 @@ This action spawns a child process. If this key is a string, it's passed as an a
 
 This action sends a notification via email, PushBullet, ... TODO
 
-#### `push`\* table
-
-This action pushes values to arrays.
-
-```toml
-[var]
-arr = { length = 8 }
-
-[task.foo]
-push = { arr = 42 }
-```
-
 #### `add`\* table
 
 This action adds the specified value to each variable.
@@ -340,6 +328,19 @@ set = { a = "{{ a * 2 }}", b = "Hello, world" }
 [[monitor.abc.actions]]
 if = { a = 84 }
 set = { c = "b equals {{b}}" }
+```
+
+#### `push` table
+
+This action pushes values to arrays. You can set the capacity of the array by declaring a variable named `<array name>_cap`.
+
+```toml
+[var]
+arr = []
+arr_cap = 2
+
+[task.foo]
+push = { arr = 42 }
 ```
 
 #### `call`\* string or array of strings
