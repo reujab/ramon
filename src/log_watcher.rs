@@ -23,7 +23,7 @@ pub struct LogWatcher {
     path: PathBuf,
     file: File,
     cursor: u64,
-    rx: Receiver<Result<notify::Event, notify::Error>>,
+    watcher_rx: Receiver<Result<notify::Event, notify::Error>>,
     event_tx: Sender<Event>,
 }
 
@@ -37,9 +37,9 @@ impl LogWatcher {
         file.seek(SeekFrom::End(0)).await?;
         let cursor = file.stream_position().await?;
 
-        let (tx, rx) = mpsc::channel(1);
+        let (watcher_tx, watcher_rx) = mpsc::channel(1);
         let mut watcher = notify::recommended_watcher(move |res| {
-            tx.blocking_send(res).unwrap();
+            watcher_tx.blocking_send(res).unwrap();
         })?;
         watcher.watch(&path, RecursiveMode::NonRecursive)?;
 
@@ -49,13 +49,13 @@ impl LogWatcher {
             path,
             file,
             cursor,
-            rx,
+            watcher_rx,
             event_tx,
         })
     }
 
     pub async fn start(mut self) -> Result<()> {
-        while let Some(res) = self.rx.recv().await {
+        while let Some(res) = self.watcher_rx.recv().await {
             self.process_log_event(res?).await?;
         }
         bail!("No more events.");
