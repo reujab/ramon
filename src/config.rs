@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::{path::PathBuf, time::Duration};
 
 use anyhow::{anyhow, bail, Error, Result};
 use regex::Regex;
@@ -14,6 +14,7 @@ pub struct MonitorConfig {
 
     pub log: Option<PathBuf>,
 
+    pub cooldown: Option<Duration>,
     pub match_log: Option<Regex>,
 
     pub exec: Option<Exec>,
@@ -111,7 +112,29 @@ fn validate_keys(table: &Table, valid_keys: &[&'static str]) -> Result<()> {
 }
 
 fn parse_monitor_config(name: String, mut monitor_table: Table) -> Result<MonitorConfig> {
-    validate_keys(&monitor_table, &["log", "match_log", "exec", "set", "push"])?;
+    validate_keys(
+        &monitor_table,
+        &["cooldown", "log", "match_log", "set", "push", "exec"],
+    )?;
+
+    let cooldown = match monitor_table.remove("cooldown") {
+        Some(cooldown) => match cooldown {
+            Value::String(cooldown_str) => Some(
+                duration_str::parse(cooldown_str)
+                    .map_err(|err| anyhow!("Invalid cooldown:\n{err}"))?,
+            ),
+            _ => bail!("Key `cooldown` must be a string."),
+        },
+        None => None,
+    };
+
+    let log = match monitor_table.remove("log") {
+        Some(log) => match log {
+            Value::String(log_str) => Some(log_str.into()),
+            _ => bail!("Key `log` must be a string."),
+        },
+        None => None,
+    };
 
     let match_log = match monitor_table.remove("match_log") {
         Some(match_log) => {
@@ -122,26 +145,6 @@ fn parse_monitor_config(name: String, mut monitor_table: Table) -> Result<Monito
                 .map_err(|err| anyhow!("Failed to parse match_log: {err}"))?;
             Some(log_regex)
         }
-        None => None,
-    };
-
-    let log = match monitor_table.get("log") {
-        Some(log) => {
-            let file_name = log.as_str().ok_or(anyhow!("Key `log` must be a string."))?;
-            Some(Path::new(file_name).to_owned())
-        }
-        None => None,
-    };
-
-    let exec = match monitor_table.remove("exec") {
-        Some(exec) => match exec {
-            Value::String(exec) => Some(Exec::Shell(exec)),
-            Value::Array(args) => match args.is_empty() {
-                true => bail!("Key `exec` must not be empty."),
-                false => Some(Exec::Spawn(args.into_iter().map(value_to_string).collect())),
-            },
-            _ => bail!("Key `exec` must be a string or an array of strings."),
-        },
         None => None,
     };
 
@@ -161,9 +164,22 @@ fn parse_monitor_config(name: String, mut monitor_table: Table) -> Result<Monito
         None => Table::new(),
     };
 
+    let exec = match monitor_table.remove("exec") {
+        Some(exec) => match exec {
+            Value::String(exec) => Some(Exec::Shell(exec)),
+            Value::Array(args) => match args.is_empty() {
+                true => bail!("Key `exec` must not be empty."),
+                false => Some(Exec::Spawn(args.into_iter().map(value_to_string).collect())),
+            },
+            _ => bail!("Key `exec` must be a string or an array of strings."),
+        },
+        None => None,
+    };
+
     Ok(MonitorConfig {
         name,
 
+        cooldown,
         log,
 
         match_log,

@@ -5,7 +5,11 @@ use crate::{
 use anyhow::{bail, Result};
 use log::{debug, error, info, warn};
 use regex::Regex;
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use tokio::{
     process::Command,
     sync::{
@@ -21,7 +25,9 @@ pub struct Monitor {
     global_variables: Arc<Mutex<HashMap<String, Value>>>,
     local_variables: HashMap<String, Value>,
     event_rx: Receiver<Event>,
+    last_action_time: Option<Instant>,
 
+    cooldown: Option<Duration>,
     log_regex: Option<Regex>,
 
     set_variables: Table,
@@ -59,7 +65,9 @@ impl Monitor {
             global_variables,
             local_variables: HashMap::new(),
             event_rx,
+            last_action_time: None,
 
+            cooldown: config.cooldown,
             log_regex: config.match_log,
 
             set_variables: config.set,
@@ -79,7 +87,14 @@ impl Monitor {
     }
 
     async fn dispatch_event(&mut self, event: Event) -> Result<()> {
-        // TODO: cooldown
+        if let Some(cooldown) = self.cooldown {
+            if let Some(last_action_time) = self.last_action_time {
+                if Instant::now().duration_since(last_action_time) < cooldown {
+                    info!("[{}] Still cooling down.", self.name);
+                    return Ok(());
+                }
+            }
+        }
 
         if let Event::NewLogLine(line) = event {
             if let Some(regex) = &self.log_regex {
@@ -119,6 +134,7 @@ impl Monitor {
     }
 
     async fn run_actions(&mut self) -> Result<()> {
+        self.last_action_time = Some(Instant::now());
         self.sync_local_vars().await?;
 
         if let Some(exec) = &self.exec {

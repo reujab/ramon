@@ -11,6 +11,7 @@ categories = ["command-line-utilities", "email", "parsing"]
 
 [dependencies]
 anyhow = "1"
+duration-str = "0.11"
 env_logger = "0.11"
 log = "0.4"
 notify = "6"
