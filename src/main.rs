@@ -1,12 +1,12 @@
 mod config;
 mod monitor;
 
-use std::process::exit;
+use std::{collections::HashMap, process::exit, sync::Arc};
 
 use anyhow::{anyhow, Result};
 use log::error;
 use monitor::Monitor;
-use sqlx::SqlitePool;
+use tokio::sync::Mutex;
 
 #[tokio::main]
 async fn main() {
@@ -27,25 +27,28 @@ async fn run() -> Result<()> {
         )
     })?;
 
-    let pool = SqlitePool::connect(":memory:").await?;
-    sqlx::migrate!("./migrations").run(&pool).await?;
-
     // TODO: process vars
     // TODO: process notification config
     // TODO: process actions
 
+    let global_variables = Arc::new(Mutex::new(HashMap::new()));
+
     // Process monitors.
     let mut monitors = Vec::with_capacity(config.monitors.len());
     for monitor_config in config.monitors {
-        let monitor = Monitor::new(monitor_config, pool.clone()).await?;
+        let name = monitor_config.name.clone();
+        let monitor = Monitor::new(monitor_config, global_variables.clone())
+            .await
+            .map_err(|err| anyhow!("Monitor `{}`: {err}", name))?;
         monitors.push(monitor);
     }
     let mut handles = Vec::with_capacity(monitors.len());
     for mut monitor in monitors {
         let handle = tokio::spawn(async move {
             let res = monitor.start().await;
+            error!("[{}] Monitor exited early.", monitor.name);
             if let Err(err) = &res {
-                error!("{err}");
+                error!("[{}] {err}", monitor.name);
             }
             res
         });

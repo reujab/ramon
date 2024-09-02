@@ -2,6 +2,7 @@ use std::{
     collections::HashMap,
     io::SeekFrom,
     path::PathBuf,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -12,27 +13,33 @@ use notify::{
     EventKind, RecursiveMode, Watcher,
 };
 use regex::Regex;
-use sqlx::{pool::PoolConnection, Row, Sqlite, SqlitePool};
 use tokio::{
     fs::{File, OpenOptions},
     io::{AsyncReadExt, AsyncSeekExt},
     process::Command,
-    sync::{mpsc, mpsc::Receiver},
+    sync::{
+        mpsc::{self, Receiver},
+        Mutex,
+    },
     time::sleep,
 };
+use toml::{Table, Value};
 
-use crate::config::{MonitorConfig, Variable};
+use crate::config::MonitorConfig;
 
 pub struct Monitor {
-    name: String,
-    log_regex: Option<Regex>,
-    exec: Option<String>,
-    log: Option<Log>,
-    watcher: Box<dyn Watcher + Send>,
+    pub name: String,
+
+    global_variables: Arc<Mutex<HashMap<String, Value>>>,
+    local_variables: HashMap<String, Value>,
+    set_variables: Table,
     event_rx: Receiver<InternalEvent>,
-    local_variables: HashMap<String, String>,
-    set_variables: Vec<Variable>,
-    sqlite: PoolConnection<Sqlite>,
+    watcher: Box<dyn Watcher + Send>,
+
+    log: Option<Log>,
+    log_regex: Option<Regex>,
+
+    exec: Option<String>,
 }
 
 pub struct Log {
@@ -51,7 +58,10 @@ pub enum ExternalEvent<'a> {
 }
 
 impl Monitor {
-    pub async fn new(config: MonitorConfig, pool: SqlitePool) -> Result<Self> {
+    pub async fn new(
+        config: MonitorConfig,
+        global_variables: Arc<Mutex<HashMap<String, Value>>>,
+    ) -> Result<Self> {
         let name = config.name;
         let log_file = match config.log {
             Some(path) => {
@@ -59,7 +69,7 @@ impl Monitor {
                     .read(true)
                     .open(&path)
                     .await
-                    .map_err(|err| anyhow!("[{name}] Failed to open {path:?}: {err}"))?;
+                    .map_err(|err| anyhow!("Failed to open {path:?}: {err}"))?;
                 file.seek(SeekFrom::End(0)).await?;
                 let cursor = file.stream_position().await?;
                 Some(Log { path, file, cursor })
@@ -77,18 +87,19 @@ impl Monitor {
             watcher.watch(&log_file.path, RecursiveMode::NonRecursive)?;
         }
 
-        let sqlite = pool.acquire().await?;
-
         Ok(Self {
             name,
-            log_regex: config.match_log,
-            exec: config.exec,
-            log: log_file,
-            watcher: Box::new(watcher),
-            event_rx,
+
+            global_variables: global_variables,
             local_variables: HashMap::new(),
             set_variables: config.set,
-            sqlite,
+            event_rx,
+            watcher: Box::new(watcher),
+
+            log: log_file,
+            log_regex: config.match_log,
+
+            exec: config.exec,
         })
     }
 
@@ -106,7 +117,7 @@ impl Monitor {
             };
         }
 
-        bail!("[{}] No more events?", self.name);
+        bail!("No more events?");
     }
 
     async fn process_log_event(&mut self, event: notify::Event) -> Result<()> {
@@ -152,7 +163,7 @@ impl Monitor {
                 Ok(file) => break file,
                 Err(err) => {
                     if Instant::now() > timeout {
-                        bail!("{prefix} File {:?} was moved: {err}", log.path);
+                        bail!("File {:?} was moved: {err}", log.path);
                     } else {
                         sleep(Duration::from_millis(10)).await;
                     }
@@ -226,7 +237,7 @@ impl Monitor {
                 {
                     if let Some(capture) = captures.name(capture_name) {
                         self.local_variables
-                            .insert(capture_name.to_owned(), capture.as_str().to_owned());
+                            .insert(capture_name.to_owned(), capture.as_str().into());
                     } else {
                         warn!(
                             "[{}] Capture group `{capture_name}` was not found.",
@@ -249,46 +260,35 @@ impl Monitor {
     }
 
     async fn run_actions(&mut self) -> Result<()> {
-        for var in self.set_variables.clone() {
-            debug!("[{}] Setting {} = {}", self.name, var.name, var.value);
-            sqlx::query(
-                r#"
-                    INSERT INTO vars (name, value)
-                    VALUES (?1, ?2)
-                    ON CONFLICT (name)
-                    DO UPDATE
-                    SET value = ?2
-                "#,
-            )
-            .bind(var.name)
-            .bind(var.value)
-            .execute(&mut *self.sqlite)
-            .await?;
+        let mut global_vars = self.global_variables.lock().await;
+        for (name, value) in self.set_variables.clone() {
+            debug!("[{}] Setting {name} = {value}", self.name);
+            global_vars.insert(name, value);
         }
+        let global_vars_clone = global_vars.clone();
+        drop(global_vars);
 
-        let global_vars = sqlx::query("SELECT * FROM vars")
-            .fetch_all(&mut *self.sqlite)
-            .await?;
-        for var in global_vars {
-            debug!(
-                "Found global variable {} = {}",
-                var.get::<String, _>("name"),
-                var.get::<String, _>("value")
-            );
-            self.local_variables
-                .entry(var.get("name"))
-                .or_insert_with(|| var.get::<String, _>("value").into());
+        for (name, value) in global_vars_clone {
+            debug!("Found global variable {} = {}", name, value);
+            self.local_variables.entry(name).or_insert(value);
         }
 
         if let Some(exec) = &self.exec {
             let mut command = Command::new("sh");
             command.args(&["-c", exec]);
             for (var, val) in &self.local_variables {
-                command.env(var, val);
+                command.env(var, var_to_string(val));
             }
             command.spawn()?.wait().await?;
         }
 
         Ok(())
+    }
+}
+
+fn var_to_string(value: &Value) -> String {
+    match value {
+        Value::String(string) => string.to_owned(),
+        v => v.to_string(),
     }
 }
