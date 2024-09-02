@@ -349,7 +349,20 @@ This action calls the specified tasks.
 
 ## Notifications\*
 
-## Variables\*
+## Variables
+
+Global variables are set in the `var` table on the root.
+
+```toml
+[var]
+str = "Hello, world"
+num = 42
+arr = [1, 2, "3"]
+
+[task.print_vars]
+exec = 'echo str = "$str", num = "$num", arr = "$arr"'
+# str = Hello, world, num = 42, arr = [1, 2, "3"]
+```
 
 ## Tasks\*
 
