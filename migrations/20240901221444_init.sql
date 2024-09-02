@@ -1,1 +1,4 @@
--- Add migration script here
+CREATE TABLE vars (
+	name TEXT PRIMARY KEY,
+	value TEXT NOT NULL
+);

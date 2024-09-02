@@ -1,4 +1,10 @@
 [monitor.1]
 log = "ramon.log"
 match_log = '^(?<line>.+)$'
-exec = 'echo Line: $line'
+set = { test = "var" }
+exec = 'echo Line: $line, Test: $test'
+
+[monitor.2]
+log = "ramon2.log"
+match_log = '^hello$'
+exec = 'echo Test: $test'

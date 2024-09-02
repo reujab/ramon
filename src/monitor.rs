@@ -12,7 +12,7 @@ use notify::{
     EventKind, RecursiveMode, Watcher,
 };
 use regex::Regex;
-use sqlx::{pool::PoolConnection, Sqlite, SqlitePool};
+use sqlx::{pool::PoolConnection, Row, Sqlite, SqlitePool};
 use tokio::{
     fs::{File, OpenOptions},
     io::{AsyncReadExt, AsyncSeekExt},
@@ -21,16 +21,17 @@ use tokio::{
     time::sleep,
 };
 
-use crate::config::MonitorConfig;
+use crate::config::{MonitorConfig, Variable};
 
 pub struct Monitor {
     name: String,
     log_regex: Option<Regex>,
     exec: Option<String>,
     log: Option<Log>,
-    watcher: Box<dyn Watcher>,
+    watcher: Box<dyn Watcher + Send>,
     event_rx: Receiver<InternalEvent>,
     local_variables: HashMap<String, String>,
+    set_variables: Vec<Variable>,
     sqlite: PoolConnection<Sqlite>,
 }
 
@@ -86,6 +87,7 @@ impl Monitor {
             watcher: Box::new(watcher),
             event_rx,
             local_variables: HashMap::new(),
+            set_variables: config.set,
             sqlite,
         })
     }
@@ -104,11 +106,11 @@ impl Monitor {
             };
         }
 
-        bail!("[{}] Monitor exited early.", self.name);
+        bail!("[{}] No more events?", self.name);
     }
 
     async fn process_log_event(&mut self, event: notify::Event) -> Result<()> {
-        debug!("Event: {:?}", event);
+        debug!("[{}] Event: {:?}", self.name, event);
 
         // Handle move from and deletion. Untested on kernels other than Linux.
         // TODO: Test on other platforms.
@@ -123,7 +125,7 @@ impl Monitor {
         let log = self.log.as_mut().unwrap();
         let new_size = log.file.metadata().await?.len();
         if new_size < log.cursor {
-            warn!("File {:?} was truncated", log.path);
+            warn!("[{}] File {:?} was truncated", self.name, log.path);
             log.cursor = new_size;
             return Ok(());
         } else if new_size == log.cursor {
@@ -133,9 +135,10 @@ impl Monitor {
     }
 
     async fn reinit_file_descriptors(&mut self) -> Result<()> {
+        let prefix = format!("[{}]", self.name);
         let log = self.log.as_mut().unwrap();
         info!(
-            "File {:?} was renamed. Reestablishing file descriptors.",
+            "{prefix} File {:?} was renamed. Reestablishing file descriptors.",
             log.path,
         );
 
@@ -149,7 +152,7 @@ impl Monitor {
                 Ok(file) => break file,
                 Err(err) => {
                     if Instant::now() > timeout {
-                        bail!("File {:?} was moved: {err}", log.path);
+                        bail!("{prefix} File {:?} was moved: {err}", log.path);
                     } else {
                         sleep(Duration::from_millis(10)).await;
                     }
@@ -158,7 +161,7 @@ impl Monitor {
         };
         log.cursor = 0;
         self.watcher.watch(&log.path, RecursiveMode::NonRecursive)?;
-        info!("File descriptors were reestablished.");
+        info!("{prefix} File descriptors were reestablished.");
 
         Ok(())
     }
@@ -215,7 +218,7 @@ impl Monitor {
                     Some(captures) => captures,
                     None => return Ok(()),
                 };
-                info!("[{}] Match found.", self.name);
+                debug!("[{}] Match found.", self.name);
                 for capture_name in regex
                     .capture_names()
                     .filter(Option::is_some)
@@ -232,9 +235,9 @@ impl Monitor {
                     }
                 }
             }
-        }
 
-        // TODO: ignore_log
+            // TODO: ignore_log
+        }
 
         // TODO: get
 
@@ -245,7 +248,38 @@ impl Monitor {
         self.run_actions().await
     }
 
-    async fn run_actions(&self) -> Result<()> {
+    async fn run_actions(&mut self) -> Result<()> {
+        for var in self.set_variables.clone() {
+            debug!("[{}] Setting {} = {}", self.name, var.name, var.value);
+            sqlx::query(
+                r#"
+                    INSERT INTO vars (name, value)
+                    VALUES (?1, ?2)
+                    ON CONFLICT (name)
+                    DO UPDATE
+                    SET value = ?2
+                "#,
+            )
+            .bind(var.name)
+            .bind(var.value)
+            .execute(&mut *self.sqlite)
+            .await?;
+        }
+
+        let global_vars = sqlx::query("SELECT * FROM vars")
+            .fetch_all(&mut *self.sqlite)
+            .await?;
+        for var in global_vars {
+            debug!(
+                "Found global variable {} = {}",
+                var.get::<String, _>("name"),
+                var.get::<String, _>("value")
+            );
+            self.local_variables
+                .entry(var.get("name"))
+                .or_insert_with(|| var.get::<String, _>("value").into());
+        }
+
         if let Some(exec) = &self.exec {
             let mut command = Command::new("sh");
             command.args(&["-c", exec]);
@@ -254,6 +288,7 @@ impl Monitor {
             }
             command.spawn()?.wait().await?;
         }
+
         Ok(())
     }
 }

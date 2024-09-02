@@ -13,6 +13,13 @@ pub struct MonitorConfig {
     pub match_log: Option<Regex>,
     pub log: Option<PathBuf>,
     pub exec: Option<String>,
+    pub set: Vec<Variable>,
+}
+
+#[derive(Clone)]
+pub struct Variable {
+    pub name: String,
+    pub value: String,
 }
 
 pub fn parse(doc: &str) -> Result<Config> {
@@ -106,7 +113,7 @@ fn validate_keys(table: &Table, valid_keys: &[&'static str]) -> Result<()> {
 }
 
 fn parse_monitor_config(name: String, monitor_table: &Table) -> Result<MonitorConfig> {
-    validate_keys(monitor_table, &["log", "match_log", "exec"])?;
+    validate_keys(monitor_table, &["log", "match_log", "exec", "set"])?;
 
     let match_log = match monitor_table.get("match_log") {
         Some(match_log) => {
@@ -141,10 +148,29 @@ fn parse_monitor_config(name: String, monitor_table: &Table) -> Result<MonitorCo
         None => None,
     };
 
+    let set = match monitor_table.get("set") {
+        Some(set) => {
+            let set_table = set
+                .as_table()
+                .ok_or(anyhow!("Key `set` must be a table."))?;
+
+            let mut vars = Vec::with_capacity(set_table.len());
+            for (name, value) in set_table {
+                vars.push(Variable {
+                    name: name.to_owned(),
+                    value: value.as_str().unwrap().to_owned(),
+                });
+            }
+            vars
+        }
+        None => Vec::new(),
+    };
+
     Ok(MonitorConfig {
         name,
         match_log,
         log,
         exec,
+        set,
     })
 }

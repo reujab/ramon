@@ -4,6 +4,7 @@ mod monitor;
 use std::process::exit;
 
 use anyhow::{anyhow, Result};
+use log::error;
 use monitor::Monitor;
 use sqlx::SqlitePool;
 
@@ -34,11 +35,24 @@ async fn run() -> Result<()> {
     // TODO: process actions
 
     // Process monitors.
+    let mut monitors = Vec::with_capacity(config.monitors.len());
     for monitor_config in config.monitors {
-        Monitor::new(monitor_config, pool.clone())
-            .await?
-            .start()
-            .await?;
+        let monitor = Monitor::new(monitor_config, pool.clone()).await?;
+        monitors.push(monitor);
+    }
+    let mut handles = Vec::with_capacity(monitors.len());
+    for mut monitor in monitors {
+        let handle = tokio::spawn(async move {
+            let res = monitor.start().await;
+            if let Err(err) = &res {
+                error!("{err}");
+            }
+            res
+        });
+        handles.push(handle);
+    }
+    for handle in handles {
+        handle.await??;
     }
 
     Ok(())
