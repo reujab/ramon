@@ -301,7 +301,7 @@ notify = { title = "Three server errors occured within one minute!" }
 
 Actions are run when an event fires and all conditions are true.
 
-#### `exec` string or array\* of strings
+#### `exec` string or array of strings
 
 This action spawns a child process. If this key is a string, it's passed as an argument to `sh -c` (\*nix) or `cmd /C` (Windows)\*, and variables are passed to the child through the environment. If this key is an array, the first item is the binary, and the remaining items are passed as arguments; variables can be passed to the child as arguments via templates.
 
@@ -332,7 +332,7 @@ set = { c = "b equals {{b}}" }
 
 #### `push` table
 
-This action pushes values to arrays. You can set the capacity of the array by declaring a variable named `<array name>_cap`.
+This action pushes values to arrays. You can set the capacity of the array by declaring a variable named `<array name>_cap`. When pushing to an array that is at capacity, the oldest value is overwritten with the pushed value.
 
 ```toml
 [var]

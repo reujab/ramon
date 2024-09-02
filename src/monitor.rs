@@ -1,4 +1,7 @@
-use crate::{config::MonitorConfig, log_watcher::LogWatcher};
+use crate::{
+    config::{value_to_string, Exec, MonitorConfig},
+    log_watcher::LogWatcher,
+};
 use anyhow::{bail, Result};
 use log::{debug, error, info, warn};
 use regex::Regex;
@@ -23,7 +26,7 @@ pub struct Monitor {
 
     set_variables: Table,
     push: Table,
-    exec: Option<String>,
+    exec: Option<Exec>,
 }
 
 pub enum Event {
@@ -119,10 +122,20 @@ impl Monitor {
         self.sync_local_vars().await?;
 
         if let Some(exec) = &self.exec {
-            let mut command = Command::new("sh");
-            command.args(&["-c", exec]);
+            let mut command = match exec {
+                Exec::Shell(sh_command) => {
+                    let mut command = Command::new("sh");
+                    command.args(&["-c", sh_command]);
+                    command
+                }
+                Exec::Spawn(args) => {
+                    let mut command = Command::new(&args[0]);
+                    command.args(&args[1..]);
+                    command
+                }
+            };
             for (var, val) in &self.local_variables {
-                command.env(var, var_to_string(val));
+                command.env(var, value_to_string(val.to_owned()));
             }
             let mut child = command.spawn()?;
             tokio::spawn(async move {
@@ -162,7 +175,7 @@ impl Monitor {
                     // Check here because we don't check on set.
                     if array.len() > cap {
                         error!("[{}] Array {array_name:?} has {} items but is capped at {}. Truncating.", self.name, array.len(), cap);
-                        array.truncate(cap as usize);
+                        array.truncate(cap);
                     }
                     if array.len() == cap {
                         // It would be more performant to use a rotating index instead,
@@ -185,12 +198,5 @@ impl Monitor {
         }
 
         Ok(())
-    }
-}
-
-fn var_to_string(value: &Value) -> String {
-    match value {
-        Value::String(string) => string.to_owned(),
-        v => v.to_string(),
     }
 }

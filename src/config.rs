@@ -16,9 +16,14 @@ pub struct MonitorConfig {
 
     pub match_log: Option<Regex>,
 
-    pub exec: Option<String>,
+    pub exec: Option<Exec>,
     pub set: Table,
     pub push: Table,
+}
+
+pub enum Exec {
+    Shell(String),
+    Spawn(Vec<String>),
 }
 
 pub fn parse(doc: &str) -> Result<Config> {
@@ -129,14 +134,14 @@ fn parse_monitor_config(name: String, mut monitor_table: Table) -> Result<Monito
     };
 
     let exec = match monitor_table.remove("exec") {
-        Some(exec) => {
-            // FIXME
-            let exec_str = match exec {
-                Value::String(exec) => exec,
-                _ => bail!("Key `exec` must be a string."),
-            };
-            Some(exec_str)
-        }
+        Some(exec) => match exec {
+            Value::String(exec) => Some(Exec::Shell(exec)),
+            Value::Array(args) => match args.is_empty() {
+                true => bail!("Key `exec` must not be empty."),
+                false => Some(Exec::Spawn(args.into_iter().map(value_to_string).collect())),
+            },
+            _ => bail!("Key `exec` must be a string or an array of strings."),
+        },
         None => None,
     };
 
@@ -167,4 +172,11 @@ fn parse_monitor_config(name: String, mut monitor_table: Table) -> Result<Monito
         set,
         push,
     })
+}
+
+pub fn value_to_string(value: Value) -> String {
+    match value {
+        Value::String(string) => string,
+        v => v.to_string(),
+    }
 }
