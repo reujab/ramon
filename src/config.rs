@@ -12,6 +12,7 @@ pub struct Config {
 
 pub struct MonitorConfig {
     pub name: String,
+    pub mutates_globals: bool,
 
     pub every: Option<Interval>,
     pub log: Option<PathBuf>,
@@ -142,10 +143,16 @@ fn parse_monitor_config(name: String, mut monitor_table: Table) -> Result<Monito
         }
     };
 
+    // Determine whether we'll need a write lock or a read lock to the global state later on.
+    let mut mutates_globals = false;
+
     let set = match monitor_table.remove("set") {
         None => Table::new(),
         Some(set) => match set {
-            Value::Table(set) => set,
+            Value::Table(set) => {
+                mutates_globals = true;
+                set
+            }
             _ => bail!("Key `set` must be a table."),
         },
     };
@@ -153,7 +160,10 @@ fn parse_monitor_config(name: String, mut monitor_table: Table) -> Result<Monito
     let push = match monitor_table.remove("push") {
         None => Table::new(),
         Some(push) => match push {
-            Value::Table(push) => push,
+            Value::Table(push) => {
+                mutates_globals = true;
+                push
+            }
             _ => bail!("Key `push` must be a table."),
         },
     };
@@ -164,7 +174,10 @@ fn parse_monitor_config(name: String, mut monitor_table: Table) -> Result<Monito
             Value::String(exec) => Some(Exec::Shell(exec)),
             Value::Array(args) => match args.is_empty() {
                 true => bail!("Key `exec` must not be empty."),
-                false => Some(Exec::Spawn(args.into_iter().map(value_to_string).collect())),
+                false => {
+                    mutates_globals = true;
+                    Some(Exec::Spawn(args.into_iter().map(value_to_string).collect()))
+                }
             },
             _ => bail!("Key `exec` must be a string or an array of strings."),
         },
@@ -174,6 +187,7 @@ fn parse_monitor_config(name: String, mut monitor_table: Table) -> Result<Monito
 
     Ok(MonitorConfig {
         name,
+        mutates_globals,
 
         log,
         every,

@@ -6,7 +6,7 @@ use anyhow::{anyhow, Result};
 use log::error;
 use monitor::Monitor;
 use std::{collections::HashMap, process::exit, sync::Arc};
-use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 
 #[tokio::main]
 async fn main() {
@@ -31,8 +31,8 @@ async fn run() -> Result<()> {
     // TODO: process actions
 
     let mut global_variables = HashMap::new();
-    global_variables.extend(config.variables);
-    let global_variables = Arc::new(Mutex::new(global_variables));
+    global_variables.extend(config.variables.into_iter().map(|(k, v)| (k, Arc::new(v))));
+    let global_variables = Arc::new(RwLock::new(global_variables));
 
     // Process monitors.
     let mut monitors = Vec::with_capacity(config.monitors.len());
