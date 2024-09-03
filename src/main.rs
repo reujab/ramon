@@ -34,13 +34,19 @@ async fn run() -> Result<()> {
     global_variables.extend(config.variables.into_iter().map(|(k, v)| (k, Arc::new(v))));
     let global_variables = Arc::new(RwLock::new(global_variables));
 
+    let event_tx_map = Arc::new(RwLock::new(HashMap::new()));
+
     // Process monitors.
     let mut monitors = Vec::with_capacity(config.monitors.len());
     for monitor_config in config.monitors {
         let name = monitor_config.name.clone();
-        let monitor = Monitor::new(monitor_config, global_variables.clone())
-            .await
-            .map_err(|err| anyhow!("Monitor `{}`: {err}", name))?;
+        let monitor = Monitor::new(
+            monitor_config,
+            global_variables.clone(),
+            event_tx_map.clone(),
+        )
+        .await
+        .map_err(|err| anyhow!("Monitor `{}`: {err}", name))?;
         monitors.push(monitor);
     }
     let mut handles = Vec::with_capacity(monitors.len());

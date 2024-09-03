@@ -2,7 +2,7 @@ use crate::{
     config::{value_to_string, Exec, MonitorConfig},
     log_watcher::LogWatcher,
 };
-use anyhow::{bail, Result};
+use anyhow::{anyhow, bail, Result};
 use log::{debug, error, info, warn};
 use regex::Regex;
 use std::{
@@ -13,7 +13,7 @@ use std::{
 use tokio::{
     process::Command,
     sync::{
-        mpsc::{self, Receiver},
+        mpsc::{self, Receiver, Sender},
         RwLock,
     },
 };
@@ -23,6 +23,7 @@ pub struct Monitor {
     pub name: String,
 
     global_variables: Arc<RwLock<HashMap<String, Arc<Value>>>>,
+    event_tx_map: Arc<RwLock<HashMap<String, Sender<Event>>>>,
     event_rx: Receiver<Event>,
     last_action_time: Option<Instant>,
     mutates_globals: bool,
@@ -33,21 +34,29 @@ pub struct Monitor {
     set_variables: Table,
     push: Table,
     exec: Option<Exec>,
+    call: Vec<String>,
 }
 
 pub enum Event {
     Tick,
     NewLogLine(String),
+    Invocation(HashMap<String, Arc<Value>>),
 }
 
 impl Monitor {
     pub async fn new(
         config: MonitorConfig,
         global_variables: Arc<RwLock<HashMap<String, Arc<Value>>>>,
+        event_tx_map: Arc<RwLock<HashMap<String, Sender<Event>>>>,
     ) -> Result<Self> {
         let name = config.name;
 
         let (event_tx, event_rx) = mpsc::channel(1);
+
+        event_tx_map
+            .write()
+            .await
+            .insert(name.clone(), event_tx.clone());
 
         if let Some(mut interval) = config.every {
             let tx = event_tx.clone();
@@ -73,6 +82,7 @@ impl Monitor {
             name,
 
             global_variables,
+            event_tx_map,
             event_rx,
             last_action_time: None,
             mutates_globals: config.mutates_globals,
@@ -83,6 +93,7 @@ impl Monitor {
             set_variables: config.set,
             push: config.push,
             exec: config.exec,
+            call: config.call,
         })
     }
 
@@ -98,8 +109,6 @@ impl Monitor {
 
     /// Evaluate all conditions to determine if actions should be run.
     async fn evaluate(&mut self, event: Event) -> Result<()> {
-        let mut temp_variables = HashMap::new();
-
         if let Some(cooldown) = self.cooldown {
             if let Some(last_action_time) = self.last_action_time {
                 if Instant::now().duration_since(last_action_time) < cooldown {
@@ -109,33 +118,41 @@ impl Monitor {
             }
         }
 
-        if let Event::NewLogLine(line) = event {
-            if let Some(regex) = &self.log_regex {
-                let captures = match regex.captures(&line) {
-                    Some(captures) => captures,
-                    // No captures; skip line.
-                    None => return Ok(()),
-                };
-                debug!("[{}] Match found.", self.name);
-                for capture_name in regex
-                    .capture_names()
-                    .filter(Option::is_some)
-                    .map(|n| n.unwrap())
-                {
-                    if let Some(capture) = captures.name(capture_name) {
-                        temp_variables
-                            .insert(capture_name.to_owned(), Arc::new(capture.as_str().into()));
-                    } else {
-                        warn!(
-                            "[{}] Capture group `{capture_name}` was not found.",
-                            self.name
-                        );
+        let temp_variables = match event {
+            Event::NewLogLine(line) => {
+                let mut temp_variables = HashMap::new();
+
+                if let Some(regex) = &self.log_regex {
+                    let captures = match regex.captures(&line) {
+                        Some(captures) => captures,
+                        // No captures; skip line.
+                        None => return Ok(()),
+                    };
+                    debug!("[{}] Match found.", self.name);
+                    for capture_name in regex
+                        .capture_names()
+                        .filter(Option::is_some)
+                        .map(|n| n.unwrap())
+                    {
+                        if let Some(capture) = captures.name(capture_name) {
+                            temp_variables
+                                .insert(capture_name.to_owned(), Arc::new(capture.as_str().into()));
+                        } else {
+                            warn!(
+                                "[{}] Capture group `{capture_name}` was not found.",
+                                self.name
+                            );
+                        }
                     }
                 }
-            }
 
-            // TODO: ignore_log
-        }
+                // TODO: ignore_log
+
+                temp_variables
+            }
+            Event::Invocation(vars) => vars,
+            _ => HashMap::new(),
+        };
 
         // TODO: get
 
@@ -148,7 +165,7 @@ impl Monitor {
 
     async fn run_actions(&mut self, mut temp_variables: HashMap<String, Arc<Value>>) -> Result<()> {
         self.last_action_time = Some(Instant::now());
-        self.sync_local_vars(&mut temp_variables).await?;
+        self.sync_variables(&mut temp_variables).await?;
 
         if let Some(exec) = &self.exec {
             let mut command = match exec {
@@ -174,16 +191,25 @@ impl Monitor {
             });
         }
 
+        for monitor_name in &self.call {
+            self.event_tx_map
+                .read()
+                .await
+                .get(monitor_name)
+                .ok_or(anyhow!("Monitor not found: {monitor_name}"))?
+                .send(Event::Invocation(temp_variables.clone()))
+                .await?;
+        }
+
         Ok(())
     }
 
     /// Modify global variables and then copy them locally.
-    async fn sync_local_vars(
+    async fn sync_variables(
         &mut self,
         temp_variables: &mut HashMap<String, Arc<Value>>,
     ) -> Result<()> {
         if !self.mutates_globals {
-            // temp_variables.extend(self.global_variables.read().await);
             for (name, value) in &*self.global_variables.read().await {
                 temp_variables
                     .entry(name.to_owned())

@@ -12,6 +12,8 @@ pub struct Config {
 
 pub struct MonitorConfig {
     pub name: String,
+    /// Used to determine whether we'll need a write lock or a read lock to the global state later
+    /// on.
     pub mutates_globals: bool,
 
     pub every: Option<Interval>,
@@ -23,6 +25,7 @@ pub struct MonitorConfig {
     pub exec: Option<Exec>,
     pub set: Table,
     pub push: Table,
+    pub call: Vec<String>,
 }
 
 pub enum Exec {
@@ -143,7 +146,6 @@ fn parse_monitor_config(name: String, mut monitor_table: Table) -> Result<Monito
         }
     };
 
-    // Determine whether we'll need a write lock or a read lock to the global state later on.
     let mut mutates_globals = false;
 
     let set = match monitor_table.remove("set") {
@@ -183,6 +185,21 @@ fn parse_monitor_config(name: String, mut monitor_table: Table) -> Result<Monito
         },
     };
 
+    let call = match monitor_table.remove("call") {
+        None => Vec::new(),
+        Some(call) => match call {
+            Value::String(call_str) => vec![call_str],
+            Value::Array(call_arr) => call_arr
+                .into_iter()
+                .map(|v| match v {
+                    Value::String(string) => Ok(string),
+                    _ => bail!("Key `call` must be a string or an array of strings."),
+                })
+                .collect::<Result<_, _>>()?,
+            _ => bail!("Key `call` must be a string or an array of strings."),
+        },
+    };
+
     assert_table_is_empty(monitor_table)?;
 
     Ok(MonitorConfig {
@@ -197,6 +214,7 @@ fn parse_monitor_config(name: String, mut monitor_table: Table) -> Result<Monito
         exec,
         set,
         push,
+        call,
     })
 }
 
