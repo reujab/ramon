@@ -46,6 +46,18 @@ pub fn parse(doc: &str) -> Result<Config> {
         None => Table::new(),
     };
 
+    if let Some(tasks) = table.remove("task") {
+        match tasks {
+            Value::Table(tasks_table) => {
+                table
+                    .get_mut("monitor")
+                    .and_then(|monitors| monitors.as_table_mut())
+                    .map(|monitors| monitors.extend(tasks_table));
+            }
+            _ => bail!("Key `task` must be a table."),
+        }
+    }
+
     // Validate and parse monitors.
     let monitor_configs = match table.remove("monitor") {
         None => bail!("No monitors found!"),

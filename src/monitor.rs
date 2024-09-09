@@ -22,8 +22,18 @@ use toml::{value::Array, Table, Value};
 pub struct Monitor {
     pub name: String,
 
+    /// The outer Arc is required to clone among threads. The RwLock allows only one monitor to
+    /// write to the global state at a time. The inner Arc is required to cheaply clone the global
+    /// variables' values locally. The global variables are cloned locally each time an event is
+    /// fired to avoid holding a read lock for too long. This allows a monitor to modify the
+    /// global state without waiting, while also allowing already-running monitors to use a
+    /// consistent state.
     global_variables: Arc<RwLock<HashMap<String, Arc<Value>>>>,
+
+    /// The RwLock is only used during initialization. After that, this is immutable, and reads will
+    /// not block.
     event_tx_map: Arc<RwLock<HashMap<String, Sender<Event>>>>,
+
     event_rx: Receiver<Event>,
     last_action_time: Option<Instant>,
     mutates_globals: bool,
@@ -171,7 +181,7 @@ impl Monitor {
             let mut command = match exec {
                 Exec::Shell(sh_command) => {
                     let mut command = Command::new("sh");
-                    command.args(&["-c", sh_command]);
+                    command.args(["-c", sh_command]);
                     command
                 }
                 Exec::Spawn(args) => {

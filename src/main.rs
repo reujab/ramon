@@ -23,7 +23,9 @@ async fn run() -> Result<()> {
     let doc = include_str!("../ramon.toml");
     let config = config::parse(doc).map_err(|err| {
         anyhow!(
-            "Failed to parse ramon.toml: {err}\n\nRefer to https://github.com/reujab/ramon#specification-wip"
+            r#"Failed to parse ramon.toml: {err}
+
+Refer to https://github.com/reujab/ramon#specification-wip"#
         )
     })?;
 

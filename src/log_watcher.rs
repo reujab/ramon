@@ -132,7 +132,7 @@ impl LogWatcher {
         self.file.seek(SeekFrom::Start(new_size - 1)).await?;
         let mut buffer = [0; 1];
         self.file.read(&mut buffer).await?;
-        if buffer[0] != '\n' as u8 {
+        if buffer[0] != b'\n' {
             warn!("{prefix} Log chunk does not end in newline.");
             return Ok(());
         }
