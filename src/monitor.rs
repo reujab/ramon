@@ -7,6 +7,7 @@ use log::{debug, error, info, warn};
 use regex::Regex;
 use std::{
     collections::{HashMap, HashSet},
+    process::Stdio,
     time::{Duration, Instant},
 };
 use tokio::{
@@ -63,6 +64,26 @@ impl Monitor {
                 if let Err(err) = log_watcher.start().await {
                     error!("[{name}] Log watcher: {err}");
                 }
+            });
+        }
+
+        if let Some(service) = config.service {
+            let child = Command::new("journalctl")
+                .args(["-n0", "-fu", &service])
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .spawn()
+                .map_err(|err| anyhow!("Failed to spawn journalctl: {err}"))?;
+            let stdout = child.stdout.ok_or(anyhow!("Failed to capture stdout."))?;
+            let reader = BufReader::new(stdout);
+            let mut lines = reader.lines();
+            let name = name.clone();
+            let event_tx = event_tx.clone();
+            tokio::spawn(async move {
+                while let Some(line) = lines.next_line().await.unwrap() {
+                    event_tx.send(Event::NewLogLine(line)).await.unwrap();
+                }
+                error!("[{name}] Service watcher exited early.");
             });
         }
 

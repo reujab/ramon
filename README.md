@@ -138,7 +138,7 @@ Monitors are configured by creating a table in the `[monitor]` table (e.g. `[mon
 
 ### Events
 
-#### `service`\* string or array of strings
+#### `service` string
 
 This event is fired every time the specified services output a line to the systemd journal.
 
@@ -146,7 +146,7 @@ This event is fired every time the specified services output a line to the syste
 
 - `service` name of the service
 
-#### `log` glob\* (string), or array\* of globs
+#### `log` file (string)
 
 This event is fired for every line that is appended to the specified files.
 
@@ -195,7 +195,7 @@ cooldown = "1m"
 exec = "echo I will never run more than once per minute."
 ```
 
-#### `match_log` [-20] regex (string) or array of regexes
+#### `match_log` [-20] regex (string)
 
 This condition is true if the line matches the specified regular expressions. This condition only applies to events from `log` or `service`. If this key is an array, all regular expressions must match.
 
@@ -204,6 +204,10 @@ Named capture groups defined in the regular expression will become available as 
 #### `ignore_log`\* [-21] regex (string)
 
 This condition is true if the line does not match the specified regular expression. This condition only applies to events from `log` or `service`.
+
+#### `unique` [-30] variable (string)
+
+This condition is true if the specified variable has not been seen before. Ramon will cache these values in a text file at `/var/cache/ramon/unique_<monitor name>`.
 
 #### `get_fail`\* [-45] string or array of strings
 

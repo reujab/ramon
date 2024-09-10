@@ -14,6 +14,7 @@ pub struct MonitorConfig {
 
     pub every: Option<Interval>,
     pub log: Option<PathBuf>,
+    pub service: Option<String>,
 
     pub cooldown: Option<Duration>,
     pub match_log: Option<Regex>,
@@ -108,6 +109,14 @@ fn parse_monitor_config(name: String, mut monitor_table: Table) -> Result<Monito
         },
     };
 
+    let service = match monitor_table.remove("service") {
+        None => None,
+        Some(service) => match service {
+            Value::String(service_str) => Some(service_str),
+            _ => bail!("Key `service` must be a string."),
+        },
+    };
+
     let cooldown = match monitor_table.remove("cooldown") {
         None => None,
         Some(cooldown) => match cooldown {
@@ -158,6 +167,7 @@ fn parse_monitor_config(name: String, mut monitor_table: Table) -> Result<Monito
 
         log,
         every,
+        service,
 
         cooldown,
         match_log,

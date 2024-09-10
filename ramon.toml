@@ -1,5 +1,6 @@
 [monitor.1]
-log = "test.log"
-match_log = '(?<line>.*)'
-unique = "line"
-exec = 'echo Line: "$line"'
+# log = "test.log"
+service = "sshd"
+match_log = '^.*]: Accepted \S+ for (?<user>\S+) from (?<ip>\S+)'
+unique = "ip"
+exec = 'echo NEW LOGIN FROM "$ip" FOR "$user"'
