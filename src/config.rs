@@ -19,6 +19,7 @@ pub struct MonitorConfig {
     pub cooldown: Option<Duration>,
     pub match_log: Option<Regex>,
     pub unique: Option<String>,
+    pub threshold: Option<(usize, Duration)>,
 
     pub exec: Option<Exec>,
 }
@@ -148,6 +149,38 @@ fn parse_monitor_config(name: String, mut monitor_table: Table) -> Result<Monito
         },
     };
 
+    let threshold = match monitor_table.remove("threshold") {
+        None => None,
+        Some(threshold) => match threshold {
+            Value::String(threshold_str) => {
+                let split = threshold_str.split("/").collect::<Vec<&str>>();
+                let (threshold, duration) = match split.len() {
+                    1 => match &every {
+                        None => bail!("Invalid format for threshold: `every` key must be set."),
+                        Some(interval) => {
+                            let duration = duration_str::parse(split[0]).map_err(|err| {
+                                anyhow!("Failed to parse threshold duration: {err}")
+                            })?;
+                            let threshold = duration.as_millis() / interval.period().as_millis();
+                            (threshold as usize, duration)
+                        }
+                    },
+                    2 => {
+                        let threshold = split[0]
+                            .parse()
+                            .map_err(|err| anyhow!("Failed to parse threshold: {err}"))?;
+                        let duration = duration_str::parse(split[1])
+                            .map_err(|err| anyhow!("Failed to parse threshold duration: {err}"))?;
+                        (threshold, duration)
+                    }
+                    _ => bail!("Invalid format for threshold."),
+                };
+                Some((threshold, duration))
+            }
+            _ => bail!("Key `threshold` must be a string."),
+        },
+    };
+
     let exec = match monitor_table.remove("exec") {
         None => None,
         Some(exec) => match exec {
@@ -172,6 +205,7 @@ fn parse_monitor_config(name: String, mut monitor_table: Table) -> Result<Monito
         cooldown,
         match_log,
         unique,
+        threshold,
 
         exec,
     })

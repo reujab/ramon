@@ -7,6 +7,7 @@ use log::{debug, error, info, warn};
 use regex::Regex;
 use std::{
     collections::{HashMap, HashSet},
+    mem::replace,
     process::Stdio,
     time::{Duration, Instant},
 };
@@ -27,6 +28,7 @@ pub struct Monitor {
     cooldown: Option<Duration>,
     log_regex: Option<Regex>,
     unique: Option<Unique>,
+    threshold: Option<Threshold>,
 
     exec: Option<Exec>,
 }
@@ -36,9 +38,16 @@ pub enum Event {
     NewLogLine(String),
 }
 
-pub struct Unique {
+struct Unique {
     variable_name: String,
     recorded_values: HashSet<String>,
+}
+
+struct Threshold {
+    threshold: usize,
+    duration: Duration,
+    event_history: Vec<Instant>,
+    rotating_index: usize,
 }
 
 impl Monitor {
@@ -110,6 +119,13 @@ impl Monitor {
             }
         };
 
+        let threshold = config.threshold.map(|(threshold, duration)| Threshold {
+            threshold,
+            duration,
+            event_history: Vec::with_capacity(threshold),
+            rotating_index: 0,
+        });
+
         Ok(Self {
             name,
 
@@ -119,6 +135,7 @@ impl Monitor {
             cooldown: config.cooldown,
             log_regex: config.match_log,
             unique,
+            threshold,
 
             exec: config.exec,
         })
@@ -192,7 +209,24 @@ impl Monitor {
 
         // TODO: if
 
-        // TODO: threshold
+        if let Some(threshold) = &mut self.threshold {
+            let now = Instant::now();
+            if threshold.event_history.len() < threshold.threshold {
+                threshold.event_history.push(now);
+                if threshold.event_history.len() < threshold.threshold {
+                    return Ok(());
+                }
+            } else {
+                let _ = replace(&mut threshold.event_history[threshold.rotating_index], now);
+                threshold.rotating_index = (threshold.rotating_index + 1) % threshold.threshold;
+            }
+
+            let oldest_event = &threshold.event_history[threshold.rotating_index];
+            if now.duration_since(oldest_event.to_owned()) > threshold.duration {
+                info!("Didn't hit it yet");
+                return Ok(());
+            }
+        }
 
         self.run_actions(temp_variables).await
     }

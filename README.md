@@ -222,7 +222,7 @@ This condition makes an HTTP GET request to the specified URLs and evaluates to 
 
 This condition allows you to compare different values.
 
-#### `threshold`\* [-90] string
+#### `threshold` [-90] string
 
 This condition is true if every preceding condition has been true at least `n` times within `d` duration. The format of this key is `"n/d"`.
 
@@ -248,3 +248,5 @@ This action spawns a child process. If this key is a string, it's passed as an a
 This action sends a notification via email, PushBullet, ... TODO
 
 ## Notifications\*
+
+- Not yet implemented
