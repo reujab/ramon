@@ -7,25 +7,19 @@ use toml::{Table, Value};
 
 pub struct Config {
     pub monitors: Vec<MonitorConfig>,
-    pub variables: Table,
 }
 
 pub struct MonitorConfig {
     pub name: String,
-    /// Used to determine whether we'll need a write lock or a read lock to the global state later
-    /// on.
-    pub mutates_globals: bool,
 
     pub every: Option<Interval>,
     pub log: Option<PathBuf>,
 
     pub cooldown: Option<Duration>,
     pub match_log: Option<Regex>,
+    pub unique: Option<String>,
 
     pub exec: Option<Exec>,
-    pub set: Table,
-    pub push: Table,
-    pub call: Vec<String>,
 }
 
 pub enum Exec {
@@ -37,26 +31,6 @@ pub fn parse(doc: &str) -> Result<Config> {
     let mut table = doc
         .parse::<Table>()
         .map_err(|err| map_to_readable_syntax_err(doc, err))?;
-
-    let variables = match table.remove("var") {
-        Some(var) => match var {
-            Value::Table(var) => var,
-            _ => bail!("Key `var` must be a table."),
-        },
-        None => Table::new(),
-    };
-
-    if let Some(tasks) = table.remove("task") {
-        match tasks {
-            Value::Table(tasks_table) => {
-                table
-                    .get_mut("monitor")
-                    .and_then(|monitors| monitors.as_table_mut())
-                    .map(|monitors| monitors.extend(tasks_table));
-            }
-            _ => bail!("Key `task` must be a table."),
-        }
-    }
 
     // Validate and parse monitors.
     let monitor_configs = match table.remove("monitor") {
@@ -84,7 +58,6 @@ pub fn parse(doc: &str) -> Result<Config> {
 
     Ok(Config {
         monitors: monitor_configs,
-        variables,
     })
 }
 
@@ -158,27 +131,11 @@ fn parse_monitor_config(name: String, mut monitor_table: Table) -> Result<Monito
         }
     };
 
-    let mut mutates_globals = false;
-
-    let set = match monitor_table.remove("set") {
-        None => Table::new(),
-        Some(set) => match set {
-            Value::Table(set) => {
-                mutates_globals = true;
-                set
-            }
-            _ => bail!("Key `set` must be a table."),
-        },
-    };
-
-    let push = match monitor_table.remove("push") {
-        None => Table::new(),
-        Some(push) => match push {
-            Value::Table(push) => {
-                mutates_globals = true;
-                push
-            }
-            _ => bail!("Key `push` must be a table."),
+    let unique = match monitor_table.remove("unique") {
+        None => None,
+        Some(unique) => match unique {
+            Value::String(unique) => Some(unique),
+            _ => bail!("Key `unique` must be a string."),
         },
     };
 
@@ -188,27 +145,9 @@ fn parse_monitor_config(name: String, mut monitor_table: Table) -> Result<Monito
             Value::String(exec) => Some(Exec::Shell(exec)),
             Value::Array(args) => match args.is_empty() {
                 true => bail!("Key `exec` must not be empty."),
-                false => {
-                    mutates_globals = true;
-                    Some(Exec::Spawn(args.into_iter().map(value_to_string).collect()))
-                }
+                false => Some(Exec::Spawn(args.into_iter().map(value_to_string).collect())),
             },
             _ => bail!("Key `exec` must be a string or an array of strings."),
-        },
-    };
-
-    let call = match monitor_table.remove("call") {
-        None => Vec::new(),
-        Some(call) => match call {
-            Value::String(call_str) => vec![call_str],
-            Value::Array(call_arr) => call_arr
-                .into_iter()
-                .map(|v| match v {
-                    Value::String(string) => Ok(string),
-                    _ => bail!("Key `call` must be a string or an array of strings."),
-                })
-                .collect::<Result<_, _>>()?,
-            _ => bail!("Key `call` must be a string or an array of strings."),
         },
     };
 
@@ -216,17 +155,15 @@ fn parse_monitor_config(name: String, mut monitor_table: Table) -> Result<Monito
 
     Ok(MonitorConfig {
         name,
-        mutates_globals,
 
         log,
         every,
 
         cooldown,
         match_log,
+        unique,
+
         exec,
-        set,
-        push,
-        call,
     })
 }
 

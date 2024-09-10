@@ -1,6 +1,5 @@
 [monitor.1]
-every = "1s"
-cooldown = "2s"
 log = "test.log"
 match_log = '(?<line>.*)'
-exec = 'echo Hello, world'
+unique = "line"
+exec = 'echo Line: "$line"'

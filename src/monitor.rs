@@ -6,67 +6,45 @@ use anyhow::{anyhow, bail, Result};
 use log::{debug, error, info, warn};
 use regex::Regex;
 use std::{
-    collections::HashMap,
-    sync::Arc,
+    collections::{HashMap, HashSet},
     time::{Duration, Instant},
 };
 use tokio::{
+    fs::{create_dir, rename, OpenOptions},
+    io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter},
     process::Command,
-    sync::{
-        mpsc::{self, Receiver, Sender},
-        RwLock,
-    },
+    sync::mpsc::{self, Receiver},
 };
-use toml::{value::Array, Table, Value};
+use toml::Value;
 
 pub struct Monitor {
     pub name: String,
 
-    /// The outer Arc is required to clone among threads. The RwLock allows only one monitor to
-    /// write to the global state at a time. The inner Arc is required to cheaply clone the global
-    /// variables' values locally. The global variables are cloned locally each time an event is
-    /// fired to avoid holding a read lock for too long. This allows a monitor to modify the
-    /// global state without waiting, while also allowing already-running monitors to use a
-    /// consistent state.
-    global_variables: Arc<RwLock<HashMap<String, Arc<Value>>>>,
-
-    /// The RwLock is only used during initialization. After that, this is immutable, and reads will
-    /// not block.
-    event_tx_map: Arc<RwLock<HashMap<String, Sender<Event>>>>,
-
     event_rx: Receiver<Event>,
     last_action_time: Option<Instant>,
-    mutates_globals: bool,
 
     cooldown: Option<Duration>,
     log_regex: Option<Regex>,
+    unique: Option<Unique>,
 
-    set_variables: Table,
-    push: Table,
     exec: Option<Exec>,
-    call: Vec<String>,
 }
 
 pub enum Event {
     Tick,
     NewLogLine(String),
-    Invocation(HashMap<String, Arc<Value>>),
+}
+
+pub struct Unique {
+    variable_name: String,
+    recorded_values: HashSet<String>,
 }
 
 impl Monitor {
-    pub async fn new(
-        config: MonitorConfig,
-        global_variables: Arc<RwLock<HashMap<String, Arc<Value>>>>,
-        event_tx_map: Arc<RwLock<HashMap<String, Sender<Event>>>>,
-    ) -> Result<Self> {
+    pub async fn new(config: MonitorConfig) -> Result<Self> {
         let name = config.name;
 
         let (event_tx, event_rx) = mpsc::channel(1);
-
-        event_tx_map
-            .write()
-            .await
-            .insert(name.clone(), event_tx.clone());
 
         if let Some(mut interval) = config.every {
             let tx = event_tx.clone();
@@ -88,22 +66,40 @@ impl Monitor {
             });
         }
 
+        let unique = match config.unique {
+            None => None,
+            Some(variable_name) => {
+                let file_path = format!("/var/cache/ramon/unique_{name}");
+                let recorded_values = match OpenOptions::new().read(true).open(file_path).await {
+                    Err(_) => HashSet::new(),
+                    Ok(file) => {
+                        let mut values = HashSet::new();
+                        let reader = BufReader::new(file);
+                        let mut lines = reader.lines();
+                        while let Some(line) = lines.next_line().await? {
+                            values.insert(line);
+                        }
+                        values
+                    }
+                };
+                Some(Unique {
+                    variable_name,
+                    recorded_values,
+                })
+            }
+        };
+
         Ok(Self {
             name,
 
-            global_variables,
-            event_tx_map,
             event_rx,
             last_action_time: None,
-            mutates_globals: config.mutates_globals,
 
             cooldown: config.cooldown,
             log_regex: config.match_log,
+            unique,
 
-            set_variables: config.set,
-            push: config.push,
             exec: config.exec,
-            call: config.call,
         })
     }
 
@@ -128,41 +124,48 @@ impl Monitor {
             }
         }
 
-        let temp_variables = match event {
-            Event::NewLogLine(line) => {
-                let mut temp_variables = HashMap::new();
+        let mut temp_variables = HashMap::new();
 
-                if let Some(regex) = &self.log_regex {
-                    let captures = match regex.captures(&line) {
-                        Some(captures) => captures,
-                        // No captures; skip line.
-                        None => return Ok(()),
-                    };
-                    debug!("[{}] Match found.", self.name);
-                    for capture_name in regex
-                        .capture_names()
-                        .filter(Option::is_some)
-                        .map(|n| n.unwrap())
-                    {
-                        if let Some(capture) = captures.name(capture_name) {
-                            temp_variables
-                                .insert(capture_name.to_owned(), Arc::new(capture.as_str().into()));
-                        } else {
-                            warn!(
-                                "[{}] Capture group `{capture_name}` was not found.",
-                                self.name
-                            );
-                        }
+        if let Event::NewLogLine(line) = event {
+            if let Some(regex) = &self.log_regex {
+                let captures = match regex.captures(&line) {
+                    Some(captures) => captures,
+                    // No captures; skip line.
+                    None => return Ok(()),
+                };
+                debug!("[{}] Match found.", self.name);
+                for capture_name in regex
+                    .capture_names()
+                    .filter(Option::is_some)
+                    .map(|n| n.unwrap())
+                {
+                    if let Some(capture) = captures.name(capture_name) {
+                        temp_variables.insert(capture_name.to_owned(), capture.as_str().into());
+                    } else {
+                        warn!(
+                            "[{}] Capture group `{capture_name}` was not found.",
+                            self.name
+                        );
                     }
                 }
-
-                // TODO: ignore_log
-
-                temp_variables
             }
-            Event::Invocation(vars) => vars,
-            _ => HashMap::new(),
-        };
+        }
+
+        if let Some(unique) = &mut self.unique {
+            if let Some(var) = temp_variables
+                .get(&unique.variable_name)
+                .and_then(|v: &Value| v.as_str())
+            {
+                if unique.recorded_values.contains(var) {
+                    return Ok(());
+                } else {
+                    unique.recorded_values.insert(var.to_owned());
+                    if let Err(err) = self.store_unique_values().await {
+                        warn!("[{}] Failed to store unique values: {err}", self.name);
+                    }
+                }
+            }
+        }
 
         // TODO: get
 
@@ -173,9 +176,36 @@ impl Monitor {
         self.run_actions(temp_variables).await
     }
 
-    async fn run_actions(&mut self, mut temp_variables: HashMap<String, Arc<Value>>) -> Result<()> {
+    async fn store_unique_values(&mut self) -> Result<()> {
+        let _ = create_dir("/var/cache/ramon").await;
+
+        let file_path = format!("/var/cache/ramon/unique_{}", self.name);
+        let tmp_file_path = format!("{file_path}.new");
+        let file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .open(&tmp_file_path)
+            .await
+            .map_err(|err| anyhow!("Failed to create {tmp_file_path}: {err}"))?;
+        let mut writer = BufWriter::new(file);
+
+        let variables = match &self.unique {
+            None => panic!(),
+            Some(values) => &values.recorded_values,
+        };
+        for variable in variables {
+            writer.write(variable.as_bytes()).await?;
+            writer.write_u8(b'\n').await?;
+        }
+        writer.flush().await?;
+
+        rename(tmp_file_path, file_path).await?;
+
+        Ok(())
+    }
+
+    async fn run_actions(&mut self, temp_variables: HashMap<String, Value>) -> Result<()> {
         self.last_action_time = Some(Instant::now());
-        self.sync_variables(&mut temp_variables).await?;
 
         if let Some(exec) = &self.exec {
             let mut command = match exec {
@@ -191,7 +221,7 @@ impl Monitor {
                 }
             };
             for (var, val) in &temp_variables {
-                command.env(var, value_to_string((**val).clone()));
+                command.env(var, value_to_string((*val).clone()));
             }
             let mut child = command.spawn()?;
             tokio::spawn(async move {
@@ -199,79 +229,6 @@ impl Monitor {
                     error!("{err}");
                 }
             });
-        }
-
-        for monitor_name in &self.call {
-            self.event_tx_map
-                .read()
-                .await
-                .get(monitor_name)
-                .ok_or(anyhow!("Monitor not found: {monitor_name}"))?
-                .send(Event::Invocation(temp_variables.clone()))
-                .await?;
-        }
-
-        Ok(())
-    }
-
-    /// Modify global variables and then copy them locally.
-    async fn sync_variables(
-        &mut self,
-        temp_variables: &mut HashMap<String, Arc<Value>>,
-    ) -> Result<()> {
-        if !self.mutates_globals {
-            for (name, value) in &*self.global_variables.read().await {
-                temp_variables
-                    .entry(name.to_owned())
-                    .or_insert_with(|| value.clone());
-            }
-            return Ok(());
-        }
-
-        let mut global_vars = self.global_variables.write().await;
-
-        for (name, value) in self.set_variables.clone() {
-            debug!("[{}] Setting {name} = {value}", self.name);
-            global_vars.insert(name, value.into());
-        }
-
-        for (array_name, value) in self.push.clone() {
-            info!("[{}] Pushing {value} to {array_name}", self.name);
-            let cap = global_vars
-                .get(&format!("{array_name}_cap"))
-                .and_then(|cap| cap.as_integer())
-                .filter(|cap| *cap > 0)
-                .map(|cap| cap as usize)
-                .unwrap_or(usize::MAX);
-
-            let entry = global_vars
-                .entry(array_name.clone())
-                .or_insert(Arc::new(Array::new().into()));
-            match Arc::make_mut(entry) {
-                Value::Array(array) => {
-                    // Check here because we don't check on set.
-                    if array.len() > cap {
-                        error!("[{}] Array {array_name:?} has {} items but is capped at {}. Truncating.", self.name, array.len(), cap);
-                        array.truncate(cap);
-                    }
-                    if array.len() == cap {
-                        // It would be more performant to use a rotating index instead,
-                        // but I'm not too worried about this micro-optimization (yet).
-                        // FIXME
-                        array.rotate_left(1);
-                        *array.last_mut().unwrap() = value;
-                    } else {
-                        array.push(value)
-                    }
-                }
-                _ => bail!("Cannot push to {array_name:?}: Not an array"),
-            }
-        }
-
-        for (name, value) in &*global_vars {
-            temp_variables
-                .entry(name.clone())
-                .or_insert_with(|| value.clone());
         }
 
         Ok(())
