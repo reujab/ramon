@@ -18,6 +18,7 @@ pub struct MonitorConfig {
 
     pub cooldown: Option<Duration>,
     pub match_log: Option<Regex>,
+    pub ignore_log: Option<Regex>,
     pub unique: Option<String>,
     pub threshold: Option<(usize, Duration)>,
 
@@ -141,6 +142,18 @@ fn parse_monitor_config(name: String, mut monitor_table: Table) -> Result<Monito
         }
     };
 
+    let ignore_log = match monitor_table.remove("ignore_log") {
+        None => None,
+        Some(ignore_log) => match ignore_log {
+            Value::String(ignore_log_str) => {
+                let ignore_regex = Regex::new(&ignore_log_str)
+                    .map_err(|err| anyhow!("Failed to parse ignore_log: {err}"))?;
+                Some(ignore_regex)
+            }
+            _ => bail!("Key `ignore_log` must be a string."),
+        },
+    };
+
     let unique = match monitor_table.remove("unique") {
         None => None,
         Some(unique) => match unique {
@@ -204,6 +217,7 @@ fn parse_monitor_config(name: String, mut monitor_table: Table) -> Result<Monito
 
         cooldown,
         match_log,
+        ignore_log,
         unique,
         threshold,
 

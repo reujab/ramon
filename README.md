@@ -158,7 +158,7 @@ This event is fired each time the contents of a file change.
 
 - `file` the path to the file that changed
 
-#### `every`\* duration (string)
+#### `every` duration (string)
 
 This event is fired immediately, and then at the specified interval. A value of `"1ms"` fires every millisecond, `"1s"` every second, `"1m"` minute, `"1h"` hour, `"1d"` day, `"1w"` week, and `"1mon"` fires every month.
 
@@ -201,7 +201,7 @@ This condition is true if the line matches the specified regular expressions. Th
 
 Named capture groups defined in the regular expression will become available as local variables to the following conditions and actions.
 
-#### `ignore_log`\* [-21] regex (string)
+#### `ignore_log` [-21] regex (string)
 
 This condition is true if the line does not match the specified regular expression. This condition only applies to events from `log` or `service`.
 

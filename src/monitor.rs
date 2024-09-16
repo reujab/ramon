@@ -27,6 +27,7 @@ pub struct Monitor {
 
     cooldown: Option<Duration>,
     log_regex: Option<Regex>,
+    ignore_regex: Option<Regex>,
     unique: Option<Unique>,
     threshold: Option<Threshold>,
 
@@ -134,6 +135,7 @@ impl Monitor {
 
             cooldown: config.cooldown,
             log_regex: config.match_log,
+            ignore_regex: config.ignore_log,
             unique,
             threshold,
 
@@ -162,32 +164,41 @@ impl Monitor {
             }
         }
 
-        let mut temp_variables = HashMap::new();
-
-        if let Event::NewLogLine(line) = event {
-            if let Some(regex) = &self.log_regex {
-                let captures = match regex.captures(&line) {
-                    Some(captures) => captures,
-                    // No captures; skip line.
-                    None => return Ok(()),
-                };
-                debug!("[{}] Match found.", self.name);
-                for capture_name in regex
-                    .capture_names()
-                    .filter(Option::is_some)
-                    .map(|n| n.unwrap())
-                {
-                    if let Some(capture) = captures.name(capture_name) {
-                        temp_variables.insert(capture_name.to_owned(), capture.as_str().into());
-                    } else {
-                        warn!(
-                            "[{}] Capture group `{capture_name}` was not found.",
-                            self.name
-                        );
+        let temp_variables = match event {
+            Event::NewLogLine(line) => {
+                let mut temp_variables = HashMap::new();
+                if let Some(regex) = &self.log_regex {
+                    let captures = match regex.captures(&line) {
+                        Some(captures) => captures,
+                        // No captures; skip line.
+                        None => return Ok(()),
+                    };
+                    debug!("[{}] Match found.", self.name);
+                    for capture_name in regex
+                        .capture_names()
+                        .filter(Option::is_some)
+                        .map(|n| n.unwrap())
+                    {
+                        if let Some(capture) = captures.name(capture_name) {
+                            temp_variables.insert(capture_name.to_owned(), capture.as_str().into());
+                        } else {
+                            warn!(
+                                "[{}] Capture group `{capture_name}` was not found.",
+                                self.name
+                            );
+                        }
                     }
                 }
+
+                if let Some(regex) = &self.ignore_regex {
+                    if regex.is_match(&line) {
+                        return Ok(());
+                    }
+                }
+                temp_variables
             }
-        }
+            Event::Tick => HashMap::new(),
+        };
 
         if let Some(unique) = &mut self.unique {
             if let Some(var) = temp_variables

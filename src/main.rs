@@ -43,10 +43,10 @@ Refer to https://github.com/reujab/ramon#specification-wip"#
     for mut monitor in monitors {
         let handle = tokio::spawn(async move {
             let res = monitor.start().await;
-            error!("[{}] Monitor exited early.", monitor.name);
             if let Err(err) = &res {
                 error!("[{}] {err}", monitor.name);
             }
+            error!("[{}] Monitor exited early.", monitor.name);
             res
         });
         handles.push(handle);
