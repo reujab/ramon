@@ -1,13 +1,15 @@
 use crate::{
     config::{value_to_string, Exec, MonitorConfig},
+    file_watcher::watch_files,
     log_watcher::LogWatcher,
 };
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, bail, Error, Result};
 use log::{debug, error, info, warn};
 use regex::Regex;
 use std::{
     collections::{HashMap, HashSet},
     mem::replace,
+    path::PathBuf,
     process::Stdio,
     time::{Duration, Instant},
 };
@@ -37,6 +39,7 @@ pub struct Monitor {
 pub enum Event {
     Tick,
     NewLogLine(String),
+    FileChange(Vec<PathBuf>),
 }
 
 struct Unique {
@@ -94,6 +97,15 @@ impl Monitor {
                     event_tx.send(Event::NewLogLine(line)).await.unwrap();
                 }
                 error!("[{name}] Service watcher exited early.");
+            });
+        }
+
+        {
+            let name = name.clone();
+            tokio::spawn(async move {
+                if let Err(err) = watch_files(config.watch, event_tx.clone()).await {
+                    error!("[{name}] File watcher error: {err}");
+                };
             });
         }
 
@@ -195,6 +207,21 @@ impl Monitor {
                         return Ok(());
                     }
                 }
+                temp_variables
+            }
+            Event::FileChange(files) => {
+                let mut temp_variables = HashMap::new();
+                let files_array = Value::Array(
+                    files
+                        .into_iter()
+                        .map(|p| {
+                            Ok(Value::String(p.into_os_string().into_string().map_err(
+                                |path| anyhow!("Failed to convert path `{path:?}` to string."),
+                            )?))
+                        })
+                        .collect::<Result<Vec<Value>, Error>>()?,
+                );
+                temp_variables.insert("files".into(), files_array);
                 temp_variables
             }
             Event::Tick => HashMap::new(),

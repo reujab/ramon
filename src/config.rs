@@ -1,6 +1,7 @@
 use std::{path::PathBuf, time::Duration};
 
 use anyhow::{anyhow, bail, Error, Result};
+use glob::glob;
 use regex::Regex;
 use tokio::time::{interval, Interval};
 use toml::{Table, Value};
@@ -15,6 +16,7 @@ pub struct MonitorConfig {
     pub every: Option<Interval>,
     pub log: Option<PathBuf>,
     pub service: Option<String>,
+    pub watch: Vec<PathBuf>,
 
     pub cooldown: Option<Duration>,
     pub match_log: Option<Regex>,
@@ -119,6 +121,31 @@ fn parse_monitor_config(name: String, mut monitor_table: Table) -> Result<Monito
         },
     };
 
+    let watch = match monitor_table.remove("watch") {
+        None => Vec::new(),
+        Some(watch) => {
+            let globs = match watch {
+                Value::String(glob) => vec![glob],
+                Value::Array(globs) => globs
+                    .into_iter()
+                    .map(|value| match value {
+                        Value::String(glob_string) => Ok(glob_string),
+                        _ => Err(anyhow!("Key `watch` must be an array of strings.")),
+                    })
+                    .collect::<Result<Vec<String>, Error>>()?,
+                _ => bail!("Key `watch` must be a string or an array of strings."),
+            };
+            let mut paths = Vec::new();
+            for pattern in globs {
+                let matches = glob(&pattern)
+                    .map_err(|err| anyhow!("Failed to parse glob `{pattern}`: {err}"))?
+                    .filter_map(Result::ok);
+                paths.extend(matches);
+            }
+            paths
+        }
+    };
+
     let cooldown = match monitor_table.remove("cooldown") {
         None => None,
         Some(cooldown) => match cooldown {
@@ -214,6 +241,7 @@ fn parse_monitor_config(name: String, mut monitor_table: Table) -> Result<Monito
         log,
         every,
         service,
+        watch,
 
         cooldown,
         match_log,

@@ -1,4 +1,5 @@
 mod config;
+mod file_watcher;
 mod log_watcher;
 mod monitor;
 
