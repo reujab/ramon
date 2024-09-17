@@ -13,8 +13,8 @@ Ramon's design is heavily inspired by [fail2ban](https://github.com/fail2ban/fai
 ```toml
 [notify.default]
 smtp = "localhost:587"
-from = "ramon@{{host}}"
-to = "you@{{host}}"
+from = "ramon@example.com"
+to = "you@example.com"
 limit = "10/m"
 # When a notification is dispatched, wait 10 seconds to see
 # if another notification with the same id is dispatched,
@@ -26,11 +26,11 @@ notify = "default"
 
 # Aggregate all info notifications, and send them all in
 # one email at 8:00AM daily.
-[notify.type.info]
+[notify.info]
 aggregate = "0 8 * * *"
 
 # Do not aggregate critical notifications.
-[notify.type.critical]
+[notify.critical]
 aggregate = 0
 ```
 
@@ -243,9 +243,13 @@ This action spawns a child process. If this key is a string, it's passed as an a
 
 > :information_source: Note: Processes are assumed to be short-lived; they will not be killed when Ramon exits.
 
-#### `notify`\* table or string
+#### `notify` table or string
 
-This action sends a notification via email, PushBullet, ... TODO
+This action sends a notification via email, PushBullet, etc. If this key is a string, it is treated as the title, and it's sent without a body. If this key is a table, it can have the following keys:
+
+- `type` the configuration to use (default: `"default"`)
+- `title` the title of the notification (default: `"Ramon Notification"`)
+- `body` the body
 
 ## Notifications\*
 

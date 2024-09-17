@@ -5,7 +5,7 @@ mod monitor;
 use anyhow::{anyhow, Result};
 use log::error;
 use monitor::Monitor;
-use std::process::exit;
+use std::{process::exit, sync::Arc};
 
 #[tokio::main]
 async fn main() {
@@ -28,13 +28,13 @@ Refer to https://github.com/reujab/ramon#specification-wip"#
         )
     })?;
 
-    // TODO: process notification config
+    let notify_config = Arc::new(config.notifications);
 
     // Process monitors.
     let mut monitors = Vec::with_capacity(config.monitors.len());
     for monitor_config in config.monitors {
         let name = monitor_config.name.clone();
-        let monitor = Monitor::new(monitor_config)
+        let monitor = Monitor::new(monitor_config, notify_config.clone())
             .await
             .map_err(|err| anyhow!("Monitor `{}`: {err}", name))?;
         monitors.push(monitor);
