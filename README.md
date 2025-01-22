@@ -177,10 +177,6 @@ This condition is true if the specified variable has not been seen before. Ramon
 - `err` description of first error
 - `status` number or array of numbers that correspond with the URLs
 
-#### `if`\* [-50] string
-
-This condition allows you to compare different values.
-
 #### `threshold` [-90] string
 
 This condition is true if every preceding condition has been true at least `n` times within `d` duration. The format of this key is `"n/d"`.
@@ -210,6 +206,6 @@ This action sends a notification via email, PushBullet, etc. If this key is a st
 - `title` the title of the notification (default: `"Ramon Notification"`)
 - `body` the body
 
-## Notifications\*
+## Notifications
 
 \* Not yet implemented

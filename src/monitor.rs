@@ -221,10 +221,6 @@ impl Monitor {
             }
         }
 
-        // TODO: get
-
-        // TODO: if
-
         if let Some(threshold) = &mut self.threshold {
             let now = Instant::now();
             if threshold.event_history.len() < threshold.threshold {
